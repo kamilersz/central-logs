@@ -310,9 +310,12 @@ impl AuthState {
                 });
             }
         }
-        // CRUD key — hash and look up.
+        // CRUD key — hash and look up. Clone out of the cache and drop the read
+        // guard before `touch_key`, which takes the write lock to refresh the
+        // cached `last_used_at` (holding the read guard here would deadlock).
         let h = hash_token(raw);
-        if let Some(k) = self.inner.keys.read().get(&h).cloned() {
+        let hit = self.inner.keys.read().get(&h).cloned();
+        if let Some(k) = hit {
             self.touch_key(k.id);
             return Some(AuthInfo {
                 key_id: Some(k.id),
@@ -339,6 +342,13 @@ impl AuthState {
                 }
             }
             t.insert(key_id, now);
+        }
+        // Refresh the in-memory cache too, so `GET /v1/api-keys` (and the SPA
+        // "Last used" column) show the touch immediately rather than only after
+        // the next restart. Runs at the same 1/min cadence as the DB write, so
+        // the first use in a window appears within ~1s.
+        if let Some(k) = self.inner.keys.write().values_mut().find(|k| k.id == key_id) {
+            k.last_used_at = Some(now);
         }
         tracing::info!(key_id, "recording api key last_used_at touch");
         let _ = tokio::runtime::Handle::try_current().map(|rt| {
@@ -966,6 +976,53 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert!(last_used.is_some(), "last_used_at was never written");
+    }
+
+    #[tokio::test]
+    async fn middleware_refreshes_cached_last_used_at_for_listing() {
+        // Regression: the touch used to update only DuckDB, while
+        // `GET /v1/api-keys` serves the startup in-memory cache, so "Last used"
+        // stayed empty until a restart.
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::store::Store::open(
+            &dir.path().join("test.duckdb"),
+            dir.path().join("parquet"),
+            vec![],
+        )
+        .unwrap();
+        {
+            let conn = store.conn();
+            let c = conn.lock();
+            c.execute(
+                "INSERT INTO api_keys (id, name, key_hash, key_prefix, scopes) \
+                 VALUES (1, 'reader', 'deadbeef', 'deadbeef', 1)",
+                duckdb::params![],
+            )
+            .unwrap();
+        }
+
+        let (raw, k) = sample_key("reader", Scope::Read as u8);
+        let auth = AuthState::with_store(vec![k], None, Some(store.clone()));
+        let app = router_with(auth.clone());
+        let res = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/api/logs")
+                    .header("authorization", format!("Bearer {raw}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // The cache refresh is synchronous in `touch_key`, so the listing must
+        // reflect it without waiting for the spawn_blocking DB write.
+        let listed = auth.list_keys();
+        assert!(
+            listed.iter().any(|k| k.last_used_at.is_some()),
+            "cached last_used_at was not refreshed for the listing"
+        );
     }
 
     #[tokio::test]
