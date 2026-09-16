@@ -139,6 +139,16 @@ fn normalize_otlp_json(v: &mut Json) {
                         *val = Json::Number(n.into());
                         continue;
                     }
+                    // The OTLP/JSON spec encodes int64 values as decimal
+                    // strings; the `asInt` oneof branch of NumberDataPoint is
+                    // the one field prost's serde only accepts as a JSON
+                    // number. Java SDKs rely on this for JVM/gauge metrics.
+                    if k == "asInt" {
+                        if let Ok(i) = s.parse::<i64>() {
+                            *val = Json::Number(i.into());
+                            continue;
+                        }
+                    }
                 }
                 normalize_otlp_json(val);
             }
@@ -909,6 +919,35 @@ mod tests {
         assert_eq!(v["span_kind"], "SPAN_KIND_SERVER");
         assert_eq!(v["status_code"], "STATUS_CODE_ERROR");
         assert_eq!(v["level"], "error");
+    }
+
+    #[test]
+    fn otlp_json_accepts_asint_as_decimal_string() {
+        // The OTLP/JSON spec encodes int64 values (including the `asInt`
+        // oneof branch of NumberDataPoint) as decimal strings. Java SDKs
+        // rely on this for JVM/gauge metrics; the value must not be lost.
+        let json = br#"{
+          "resourceMetrics": [{
+            "resource": {"attributes": [
+              {"key": "service.name", "value": {"stringValue": "java-app"}}
+            ]},
+            "scopeMetrics": [{
+              "metrics": [{
+                "name": "jvm_memory_used_bytes",
+                "gauge": {"dataPoints": [
+                  {"timeUnixNano": "1700000000000000000", "asInt": "512000000",
+                   "attributes": [{"key": "pool", "value": {"stringValue": "heap"}}]}
+                ]}
+              }]
+            }]
+          }]
+        }"#;
+        let req = decode_metrics(Wire::Json, json).expect("decode asInt string");
+        let recs = metrics_to_records(req, now(), "");
+        let v: Json = serde_json::from_slice(&recs[0].raw).unwrap();
+        assert_eq!(v["value"], 512000000.0);
+        assert_eq!(v["metric_type"], "gauge");
+        assert_eq!(v["pool"], "heap");
     }
 
     #[test]
