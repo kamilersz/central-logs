@@ -638,7 +638,11 @@ async fn main() -> anyhow::Result<()> {
             Some(cfg.http_api_key.clone())
         };
         let static_admin_set = static_admin.is_some();
-        let auth_state = central_logs::web::auth::AuthState::new(keys, static_admin);
+        let auth_state = central_logs::web::auth::AuthState::with_store(
+            keys,
+            static_admin,
+            Some(store.clone()),
+        );
         let auth_enabled = auth_state.auth_enabled();
         if auth_enabled {
             tracing::info!(

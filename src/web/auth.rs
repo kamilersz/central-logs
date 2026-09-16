@@ -187,6 +187,12 @@ struct AuthInner {
     /// When true, NO auth is enforced (back-compat for loopback dev). False
     /// when at least one credential source is configured.
     auth_enabled: bool,
+    /// Optional DuckDB handle used to persist per-key `last_used_at` touches.
+    /// `None` in tests and auth-less builds.
+    store: Option<crate::store::Store>,
+    /// key id → last-recorded touch, throttling `last_used_at` writes to one
+    /// UPDATE per key per minute.
+    key_touch: parking_lot::Mutex<HashMap<i64, chrono::DateTime<chrono::Utc>>>,
 }
 
 impl AuthState {
@@ -198,12 +204,24 @@ impl AuthState {
                 sessions: RwLock::new(HashMap::new()),
                 static_admin_key: None,
                 auth_enabled: false,
+                store: None,
+                key_touch: parking_lot::Mutex::new(HashMap::new()),
             }),
         }
     }
 
     /// Build with a preloaded key set + optional static admin key.
     pub fn new(keys: Vec<ApiKey>, static_admin_key: Option<String>) -> Self {
+        Self::with_store(keys, static_admin_key, None)
+    }
+
+    /// Build with a preloaded key set, optional static admin key, and an
+    /// optional store handle for persisting `last_used_at` touches.
+    pub fn with_store(
+        keys: Vec<ApiKey>,
+        static_admin_key: Option<String>,
+        store: Option<crate::store::Store>,
+    ) -> Self {
         let auth_enabled = !keys.is_empty() || static_admin_key.is_some();
         let map: HashMap<String, ApiKey> =
             keys.into_iter().filter(|k| k.is_active()).map(|k| (k.key_hash.clone(), k)).collect();
@@ -213,6 +231,8 @@ impl AuthState {
                 sessions: RwLock::new(HashMap::new()),
                 static_admin_key,
                 auth_enabled,
+                store,
+                key_touch: parking_lot::Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -293,6 +313,7 @@ impl AuthState {
         // CRUD key — hash and look up.
         let h = hash_token(raw);
         if let Some(k) = self.inner.keys.read().get(&h).cloned() {
+            self.touch_key(k.id);
             return Some(AuthInfo {
                 key_id: Some(k.id),
                 key_name: k.name,
@@ -301,6 +322,36 @@ impl AuthState {
             });
         }
         None
+    }
+
+    /// Record that a CRUD key was just used, persisting `last_used_at`.
+    /// Throttled to one UPDATE per key per minute so high-rate ingest paths
+    /// don't hammer DuckDB; the write runs on a blocking thread so the auth
+    /// hot path never waits on the store lock.
+    fn touch_key(&self, key_id: i64) {
+        let Some(store) = self.inner.store.clone() else { return };
+        let now = chrono::Utc::now();
+        {
+            let mut t = self.inner.key_touch.lock();
+            if let Some(prev) = t.get(&key_id) {
+                if (now - *prev).num_seconds() < 60 {
+                    return;
+                }
+            }
+            t.insert(key_id, now);
+        }
+        let _ = tokio::runtime::Handle::try_current().map(|rt| {
+            rt.spawn_blocking(move || {
+                let conn = store.conn();
+                let c = conn.lock();
+                if let Err(e) = c.execute(
+                    "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
+                    duckdb::params![chrono::Utc::now(), key_id],
+                ) {
+                    tracing::warn!(key_id, error = %e, "api_keys last_used_at update failed");
+                }
+            });
+        });
     }
 
     /// Issue a new browser session bound to the given key. Returns the random
@@ -862,6 +913,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn middleware_persists_last_used_at_for_crud_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::store::Store::open(
+            &dir.path().join("test.duckdb"),
+            dir.path().join("parquet"),
+            vec![],
+        )
+        .unwrap();
+        // Seed the CRUD key row the cached ApiKey points at (sample_key id=1).
+        {
+            let conn = store.conn();
+            let c = conn.lock();
+            c.execute(
+                "INSERT INTO api_keys (id, name, key_hash, key_prefix, scopes) \
+                 VALUES (1, 'reader', 'deadbeef', 'deadbeef', 1)",
+                duckdb::params![],
+            )
+            .unwrap();
+        }
+
+        let (raw, k) = sample_key("reader", Scope::Read as u8);
+        let app = router_with(AuthState::with_store(vec![k], None, Some(store.clone())));
+        let res = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/api/logs")
+                    .header("authorization", format!("Bearer {raw}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // The touch is async (spawn_blocking); poll briefly for the write.
+        let mut last_used = None;
+        for _ in 0..50 {
+            {
+                let conn = store.conn();
+                let c = conn.lock();
+                let mut stmt = c.prepare("SELECT last_used_at FROM api_keys WHERE id = 1").unwrap();
+                last_used = stmt.query_row([], |row| row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0)).unwrap();
+            }
+            if last_used.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(last_used.is_some(), "last_used_at was never written");
     }
 
     #[tokio::test]
