@@ -62,6 +62,51 @@ that directory when the service is stopped. **Don't `rm` `central.duckdb.wal`
 while the process is running** — but since the service now checkpoints on
 shutdown, you should never need to.
 
+## Deploying an update
+
+This host runs **four instances** (`:8084`, `:8085`, `:8086`, `:8087`), each a
+separate per-client data silo, all sharing the single binary at
+`target/release/central-logs`. A deploy must therefore **rebuild once and
+restart all four** — a new binary is only picked up when a unit restarts.
+
+```bash
+# 1. On your machine: commit + push to the GitLab remote.
+# 2. On the server:
+cd ~/central-logs
+git pull --ff-only
+./scripts/deploy.sh
+```
+
+`scripts/deploy.sh` does, in order:
+
+1. snapshots the current binary to `target/release/central-logs.prev` (rollback),
+2. `cargo build --release --locked`,
+3. `systemctl --user restart` for `central-logs`, `-8085`, `-8086`, `-8087`,
+4. polls `/health` on all four ports and exits non-zero if any is not `200`.
+
+Flags:
+
+| Flag | Effect |
+|---|---|
+| `--pull` | run `git pull --ff-only` first (one-command deploy) |
+| `--web` | rebuild the SPA (`cd web && npm ci && npm run build`) **before** cargo — required whenever anything under `web/` changed, because the SPA is embedded into the binary at compile time |
+| `--rollback` | restore `central-logs.prev` and restart all instances |
+
+Frontend note: `cargo build` alone does **not** rebuild the SPA. If you changed
+`web/`, use `./scripts/deploy.sh --web` (or run `npm run build` manually first).
+
+Manual equivalent, if you prefer:
+
+```bash
+cargo build --release --locked
+systemctl --user restart central-logs central-logs-8085 central-logs-8086 central-logs-8087
+for p in 8084 8085 8086 8087; do curl -s -o /dev/null -w "$p %{http_code}\n" http://127.0.0.1:$p/health; done
+```
+
+> `.env`, `.env-*`, `data*`, `target/`, and `*.duckdb`/`*.redb` are gitignored
+> and are **not** touched by a deploy. Secrets and per-client data stay on the
+> server.
+
 ## Housekeeping: backups, restore, storage
 
 ### Backups
