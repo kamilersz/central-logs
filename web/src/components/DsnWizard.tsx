@@ -37,6 +37,14 @@ function slugify(s: string): string {
     .slice(0, 64);
 }
 
+/** Compose a standard Sentry DSN: {scheme}://{publicKey}@{host}/{project}.
+ *  SDKs parse this grammar, so the key MUST sit before the @ — a
+ *  ?sentry_key= query param is only honored by hand-rolled HTTP clients. */
+function buildDsn(host: string, publicKey: string, project: string): string {
+  const at = host.indexOf("://");
+  return `${host.slice(0, at + 3)}${publicKey}@${host.slice(at + 3)}/${project}`;
+}
+
 /** Build Sentry SDK snippets for the most common platforms. Each assumes
  *  the user will paste the DSN into the project's env (SENTRY_DSN) — but we
  *  also inline it so the snippet is truly copy-paste. */
@@ -97,6 +105,7 @@ function snippetsFor(project: string, dsn: string): Snippet[] {
 export default function DsnWizard({ initialProject = "", onClose }: Props) {
   const [project, setProject] = useState(initialProject);
   const [keyName, setKeyName] = useState("");
+  const [keyTouched, setKeyTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
@@ -105,16 +114,16 @@ export default function DsnWizard({ initialProject = "", onClose }: Props) {
 
   const host = useMemo(() => currentHost(), []);
   const slug = slugify(project);
-  const dsn = createdKey && slug ? `${host}/${slug}?sentry_key=${createdKey}` : null;
+  const dsn = createdKey && slug ? buildDsn(host, createdKey, slug) : null;
   const snippets = dsn ? snippetsFor(slug, dsn) : [];
   const active = snippets.find((s) => s.id === tab) ?? snippets[0];
 
   // Keep the key-name input sane — defaults to the project name and updates
-  // as the user types. We allow the user to override so two captures against
-  // the same project (e.g. web + worker) get distinct keys.
+  // as the user types. Once the user edits the field by hand (keyTouched),
+  // their override wins and the mirroring stops; "Create another" clears it.
   useEffect(() => {
-    if (!keyName) setKeyName(project ? `sentry:${project.trim()}` : "");
-  }, [project, keyName]);
+    if (!keyTouched) setKeyName(project ? `sentry:${project.trim()}` : "");
+  }, [project, keyTouched]);
 
   async function generate() {
     if (!slug) {
@@ -141,6 +150,8 @@ export default function DsnWizard({ initialProject = "", onClose }: Props) {
     setCreatedKey(null);
     setKeyId(null);
     setError(null);
+    setKeyName("");
+    setKeyTouched(false);
   }
 
   return (
@@ -205,7 +216,10 @@ export default function DsnWizard({ initialProject = "", onClose }: Props) {
                 <input
                   type="text"
                   value={keyName}
-                  onChange={(e) => setKeyName(e.target.value)}
+                  onChange={(e) => {
+                    setKeyTouched(true);
+                    setKeyName(e.target.value);
+                  }}
                   placeholder="sentry:my-app"
                   className="w-full px-3 py-2 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm font-mono"
                 />
