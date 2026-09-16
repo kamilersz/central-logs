@@ -340,6 +340,7 @@ impl AuthState {
             }
             t.insert(key_id, now);
         }
+        tracing::info!(key_id, "recording api key last_used_at touch");
         let _ = tokio::runtime::Handle::try_current().map(|rt| {
             rt.spawn_blocking(move || {
                 let conn = store.conn();
