@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" class="dark" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>central-logs</title>
+    <script>
+      // Apply persisted theme/font before first paint (no flash).
+      // Keep the dark-theme id list in sync with web/src/theme.ts.
+      (function () {
+        try {
+          var el = document.documentElement;
+          var theme = localStorage.getItem("cl-theme") || "dark";
+          var darkIds = ["dark", "contrast", "tokyo-night", "dracula", "nord", "catppuccin", "one-dark"];
+          el.setAttribute("data-theme", theme);
+          el.classList.toggle("dark", darkIds.indexOf(theme) >= 0);
+          var font = localStorage.getItem("cl-font");
+          if (font) el.setAttribute("data-font", font);
+          var mono = localStorage.getItem("cl-mono");
+          if (mono) el.setAttribute("data-mono", mono);
+        } catch (e) { /* private mode etc. */ }
+      })();
+    </script>
+  </head>
+  <body class="bg-tremor-background-subtle">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

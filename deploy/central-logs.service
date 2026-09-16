@@ -1,0 +1,18 @@
+[Unit]
+Description=central-logs logging platform
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/central-logs
+EnvironmentFile=%h/central-logs/.env
+ExecStart=%h/central-logs/target/release/central-logs --http-port 8080 \
+  --hot-attribute 'user_id:bigint' \
+  --hot-attribute 'trace_id:varchar' \
+  --hot-attribute 'request_route:varchar'
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target

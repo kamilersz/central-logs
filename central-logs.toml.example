@@ -1,0 +1,24 @@
+# Example config: copy to central-logs.toml and pass --config central-logs.toml
+
+[retention]
+hot_max_age = "2mo"        # hot tier bound (overrides hot_tier_hours)
+# hot_max_bytes = "10GB"   # size-based hot cap (whichever fires first)
+# wal_max_bytes = "20GB"   # pause ingest (503) when the WAL dir exceeds this
+
+[backup]
+enabled = true
+schedule = "daily@01:30"   # "daily@HH:MM" (uses timezone) or "size:512MiB"
+timezone = "Asia/Jakarta"
+backend = "s3"             # "" for local-only copies
+bucket = "cl-backups"
+prefix = "central-logs/backups"
+# endpoint = "http://minio:9000"   # MinIO / S3-compatible
+# region = "us-east-1"
+keep_local_copy = true
+keep_last = 14
+
+[error_tracking.projects]
+"7" = "checkout"
+
+[error_tracking.notify]
+webhooks = ["https://hooks.example.com/..."]

@@ -1,0 +1,2 @@
+# central-logs metrics snapshot at {{ generated_at.to_rfc3339() }}
+# Use /metrics for the live Prometheus-format endpoint.

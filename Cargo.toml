@@ -1,0 +1,113 @@
+[package]
+name = "central-logs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Self-hosted, single-node centralized logging platform with analytics, forecasting, and MCP"
+license = "MIT"
+
+[lib]
+name = "central_logs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "central-logs"
+path = "src/main.rs"
+
+[features]
+default = ["bundled", "mcp", "dashboard"]
+bundled = ["duckdb/bundled"]
+dashboard = ["dep:rust-embed", "dep:askama", "dep:mime_guess"]
+mcp = ["dep:rmcp"]
+geoip = ["dep:maxminddb"]
+alert-tool = []
+object-storage = ["dep:object_store"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "codec"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+futures-util = "0.3"
+async-trait = "0.1"
+
+axum = { version = "0.8", features = ["http2", "macros", "ws"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["trace", "cors", "compression-gzip", "decompression-gzip", "fs", "limit"] }
+hyper = { version = "1", features = ["http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+
+# OTLP/HTTP ingest: protobuf message types generated from the OpenTelemetry
+# .proto definitions (prost), plus serde for the OTLP JSON encoding. No gRPC
+# transport is pulled in (`default-features = false` avoids `tonic`).
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "trace", "logs", "metrics", "with-serde"] }
+prost = "0.14"
+
+crc32fast = "1"
+redb = "4"
+duckdb = { version = "1.10505", features = ["chrono", "serde_json"] }
+arrow = "59"
+parquet = { version = "59", features = ["async"] }
+sha2 = "0.10"
+subtle = "2"
+
+syslog_loose = "0.23"
+
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = { version = "0.10", features = ["serde"] }
+
+# Backup snapshots: atomic tar.gz of the data dir + manifest.
+tar = "0.4"
+flate2 = "1"
+
+# SMTP for alert email channels (blocking transport, run via spawn_blocking).
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls-tls"] }
+
+augurs = { version = "0.10", features = ["ets"] }
+augurs-core = "0.10"
+augurs-ets = "0.10"
+augurs-mstl = "0.10"
+
+maxminddb = { version = "0.30", optional = true }
+
+# Optional object-storage cold-tier archive (S3/GCS/MinIO). Behind the
+# `object-storage` feature so default builds stay dependency-light.
+object_store = { version = "0.12", optional = true, features = ["aws", "gcp", "http"] }
+
+figment = { version = "0.10", features = ["toml", "env"] }
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
+thiserror = "2"
+
+askama = { version = "0.12", optional = true }
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+
+rmcp = { version = "3", optional = true, features = ["server", "transport-io", "transport-streamable-http-server"] }
+schemars = "1"
+
+bytes = "1"
+parking_lot = "0.12"
+once_cell = "1"
+num_cpus = "1"
+base64 = "0.22"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+dotenvy = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1

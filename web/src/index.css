@@ -1,0 +1,428 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   central-logs — base layer
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Theme palettes.
+   Every tremor token (tremor-* and dark-tremor-*) resolves to the same
+   `--cl-*` CSS variables, so a palette swap is just a `data-theme` change
+   on <html>. The `dark` class on <html> is toggled alongside it so plain
+   Tailwind `dark:` utility pairs in the pages stay coherent.
+   :root carries the default ("Mission Control" dark) values.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme="dark"] {
+  --cl-bg: #0a0e16;
+  --cl-bg-muted: #0f1522;
+  --cl-bg-subtle: #131b2c;
+  --cl-bg-emphasis: #1c2740;
+  --cl-border: #1e2636;
+  --cl-ring: rgba(91, 140, 255, 0.45);
+  --cl-content: #8b99b3;
+  --cl-content-subtle: #5d6b84;
+  --cl-content-emphasis: #c3cede;
+  --cl-content-strong: #eef2f9;
+  --cl-content-inverted: #0a0e16;
+  --cl-brand: #5b8dff;
+  --cl-brand-faint: #111a2e;
+  --cl-brand-muted: #1c2a47;
+  --cl-brand-subtle: #2c4372;
+  --cl-brand-emphasis: #7ca6ff;
+  --cl-brand-inverted: #0a0e16;
+  /* accents & chrome */
+  --cl-glow: rgba(91, 140, 255, 0.35);
+  --cl-shadow: rgba(0, 0, 0, 0.65);
+  --cl-header-bg: rgba(10, 14, 22, 0.9);
+  --cl-selection-bg: rgba(91, 140, 255, 0.35);
+  --cl-selection-fg: #eef2f9;
+  --cl-focus: rgba(91, 140, 255, 0.6);
+  --cl-scrollbar-thumb: #263149;
+  --cl-chart-grid: #263149;
+}
+
+[data-theme="light"] {
+  --cl-bg: #ffffff;
+  --cl-bg-muted: #f4f6fb;
+  --cl-bg-subtle: #eceff7;
+  --cl-bg-emphasis: #1c2740;
+  --cl-border: #dde3ee;
+  --cl-ring: #c6d7ff;
+  --cl-content: #3f4a63;
+  --cl-content-subtle: #69748c;
+  --cl-content-emphasis: #242d42;
+  --cl-content-strong: #101624;
+  --cl-content-inverted: #ffffff;
+  --cl-brand: #3b6fe0;
+  --cl-brand-faint: #eef4ff;
+  --cl-brand-muted: #d3e0ff;
+  --cl-brand-subtle: #adc6ff;
+  --cl-brand-emphasis: #2450b8;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(59, 111, 224, 0.25);
+  --cl-shadow: rgba(15, 23, 42, 0.12);
+  --cl-header-bg: rgba(255, 255, 255, 0.9);
+  --cl-selection-bg: rgba(59, 111, 224, 0.22);
+  --cl-selection-fg: #101624;
+  --cl-focus: rgba(59, 111, 224, 0.55);
+  --cl-scrollbar-thumb: #c3cbdb;
+  --cl-chart-grid: #dde3ee;
+}
+
+[data-theme="contrast"] {
+  --cl-bg: #000000;
+  --cl-bg-muted: #0d0d0d;
+  --cl-bg-subtle: #161616;
+  --cl-bg-emphasis: #262626;
+  --cl-border: #6f6f6f;
+  --cl-ring: rgba(255, 255, 255, 0.55);
+  --cl-content: #f2f2f2;
+  --cl-content-subtle: #ababab;
+  --cl-content-emphasis: #e0e0e0;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #000000;
+  --cl-brand: #4da3ff;
+  --cl-brand-faint: #10233d;
+  --cl-brand-muted: #1a3a63;
+  --cl-brand-subtle: #2f66b8;
+  --cl-brand-emphasis: #8ec7ff;
+  --cl-brand-inverted: #000000;
+  --cl-glow: rgba(77, 163, 255, 0.4);
+  --cl-shadow: rgba(0, 0, 0, 0.85);
+  --cl-header-bg: rgba(0, 0, 0, 0.92);
+  --cl-selection-bg: rgba(77, 163, 255, 0.45);
+  --cl-selection-fg: #ffffff;
+  --cl-focus: #8ec7ff;
+  --cl-scrollbar-thumb: #525252;
+  --cl-chart-grid: #454545;
+}
+
+[data-theme="tokyo-night"] {
+  --cl-bg: #1a1b26;
+  --cl-bg-muted: #16161e;
+  --cl-bg-subtle: #1f2335;
+  --cl-bg-emphasis: #292e42;
+  --cl-border: #2a2e42;
+  --cl-ring: rgba(122, 162, 247, 0.45);
+  --cl-content: #a9b1d6;
+  --cl-content-subtle: #565f89;
+  --cl-content-emphasis: #c0caf5;
+  --cl-content-strong: #eaf0fb;
+  --cl-content-inverted: #1a1b26;
+  --cl-brand: #7aa2f7;
+  --cl-brand-faint: #1c2237;
+  --cl-brand-muted: #243052;
+  --cl-brand-subtle: #33549c;
+  --cl-brand-emphasis: #9ec3ff;
+  --cl-brand-inverted: #1a1b26;
+  --cl-glow: rgba(122, 162, 247, 0.35);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(26, 27, 38, 0.9);
+  --cl-selection-bg: rgba(122, 162, 247, 0.3);
+  --cl-selection-fg: #eaf0fb;
+  --cl-focus: rgba(122, 162, 247, 0.6);
+  --cl-scrollbar-thumb: #2f3549;
+  --cl-chart-grid: #292e42;
+}
+
+[data-theme="dracula"] {
+  --cl-bg: #282a36;
+  --cl-bg-muted: #21222c;
+  --cl-bg-subtle: #303446;
+  --cl-bg-emphasis: #3b3d52;
+  --cl-border: #44475a;
+  --cl-ring: rgba(189, 147, 249, 0.45);
+  --cl-content: #f8f8f2;
+  --cl-content-subtle: #8b90a8;
+  --cl-content-emphasis: #e6e6dc;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #282a36;
+  --cl-brand: #bd93f9;
+  --cl-brand-faint: #343147;
+  --cl-brand-muted: #443d66;
+  --cl-brand-subtle: #6a55b0;
+  --cl-brand-emphasis: #d4b6ff;
+  --cl-brand-inverted: #282a36;
+  --cl-glow: rgba(189, 147, 249, 0.35);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(40, 42, 54, 0.9);
+  --cl-selection-bg: rgba(189, 147, 249, 0.35);
+  --cl-selection-fg: #f8f8f2;
+  --cl-focus: rgba(189, 147, 249, 0.6);
+  --cl-scrollbar-thumb: #4b4e63;
+  --cl-chart-grid: #3d3f51;
+}
+
+[data-theme="nord"] {
+  --cl-bg: #2e3440;
+  --cl-bg-muted: #333b4a;
+  --cl-bg-subtle: #3b4252;
+  --cl-bg-emphasis: #434c5e;
+  --cl-border: #3f4a5f;
+  --cl-ring: rgba(129, 161, 193, 0.45);
+  --cl-content: #d8dee9;
+  --cl-content-subtle: #8792a8;
+  --cl-content-emphasis: #e5e9f0;
+  --cl-content-strong: #eceff4;
+  --cl-content-inverted: #2e3440;
+  --cl-brand: #81a1c1;
+  --cl-brand-faint: #344052;
+  --cl-brand-muted: #3b4d66;
+  --cl-brand-subtle: #527096;
+  --cl-brand-emphasis: #a3c4e0;
+  --cl-brand-inverted: #2e3440;
+  --cl-glow: rgba(129, 161, 193, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.5);
+  --cl-header-bg: rgba(46, 52, 64, 0.92);
+  --cl-selection-bg: rgba(129, 161, 193, 0.35);
+  --cl-selection-fg: #eceff4;
+  --cl-focus: rgba(136, 192, 208, 0.65);
+  --cl-scrollbar-thumb: #434c5e;
+  --cl-chart-grid: #3b4252;
+}
+
+[data-theme="catppuccin"] {
+  --cl-bg: #1e1e2e;
+  --cl-bg-muted: #181825;
+  --cl-bg-subtle: #262637;
+  --cl-bg-emphasis: #313244;
+  --cl-border: #363a52;
+  --cl-ring: rgba(137, 180, 250, 0.45);
+  --cl-content: #cdd6f4;
+  --cl-content-subtle: #7f849c;
+  --cl-content-emphasis: #bac2de;
+  --cl-content-strong: #f2f4fd;
+  --cl-content-inverted: #1e1e2e;
+  --cl-brand: #89b4fa;
+  --cl-brand-faint: #22283f;
+  --cl-brand-muted: #2d3f66;
+  --cl-brand-subtle: #455f9e;
+  --cl-brand-emphasis: #aeccff;
+  --cl-brand-inverted: #1e1e2e;
+  --cl-glow: rgba(137, 180, 250, 0.35);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(30, 30, 46, 0.9);
+  --cl-selection-bg: rgba(137, 180, 250, 0.3);
+  --cl-selection-fg: #f2f4fd;
+  --cl-focus: rgba(137, 180, 250, 0.6);
+  --cl-scrollbar-thumb: #414559;
+  --cl-chart-grid: #313244;
+}
+
+[data-theme="one-dark"] {
+  --cl-bg: #282c34;
+  --cl-bg-muted: #21252b;
+  --cl-bg-subtle: #2c313a;
+  --cl-bg-emphasis: #3a3f4b;
+  --cl-border: #3e4451;
+  --cl-ring: rgba(97, 175, 239, 0.45);
+  --cl-content: #abb2bf;
+  --cl-content-subtle: #7f8798;
+  --cl-content-emphasis: #c8cdd7;
+  --cl-content-strong: #f0f3f7;
+  --cl-content-inverted: #282c34;
+  --cl-brand: #61afef;
+  --cl-brand-faint: #2b3b4e;
+  --cl-brand-muted: #35506e;
+  --cl-brand-subtle: #3f6ea6;
+  --cl-brand-emphasis: #8ec6ff;
+  --cl-brand-inverted: #282c34;
+  --cl-glow: rgba(97, 175, 239, 0.35);
+  --cl-shadow: rgba(0, 0, 0, 0.5);
+  --cl-header-bg: rgba(40, 44, 52, 0.9);
+  --cl-selection-bg: rgba(97, 175, 239, 0.35);
+  --cl-selection-fg: #f0f3f7;
+  --cl-focus: rgba(97, 175, 239, 0.6);
+  --cl-scrollbar-thumb: #464c58;
+  --cl-chart-grid: #3a3f4b;
+}
+
+[data-theme="solarized-light"] {
+  --cl-bg: #fdf6e3;
+  --cl-bg-muted: #eee8d5;
+  --cl-bg-subtle: #e6ddc6;
+  --cl-bg-emphasis: #d9cfb4;
+  --cl-border: #ddd6c3;
+  --cl-ring: rgba(38, 139, 210, 0.4);
+  --cl-content: #657b83;
+  --cl-content-subtle: #93a1a1;
+  --cl-content-emphasis: #52676f;
+  --cl-content-strong: #073642;
+  --cl-content-inverted: #fdf6e3;
+  --cl-brand: #268bd2;
+  --cl-brand-faint: #e3ecf2;
+  --cl-brand-muted: #c4dcea;
+  --cl-brand-subtle: #8fc0dd;
+  --cl-brand-emphasis: #1a6ea8;
+  --cl-brand-inverted: #fdf6e3;
+  --cl-glow: rgba(38, 139, 210, 0.25);
+  --cl-shadow: rgba(88, 110, 117, 0.2);
+  --cl-header-bg: rgba(253, 246, 227, 0.92);
+  --cl-selection-bg: rgba(38, 139, 210, 0.25);
+  --cl-selection-fg: #073642;
+  --cl-focus: rgba(38, 139, 210, 0.55);
+  --cl-scrollbar-thumb: #cfc7ad;
+  --cl-chart-grid: #e0d8c0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Font stacks, selected via data-font / data-mono on <html>.
+   The actual fonts are bundled via @fontsource (see main.tsx): variable
+   packages register the "<Name> Variable" family, static ones the plain
+   name. Local installations still win when present; system stacks degrade
+   gracefully when neither exists.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --cl-font-sans: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --cl-font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+[data-font="system"] {
+  --cl-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+}
+[data-font="plex"] {
+  --cl-font-sans: "IBM Plex Sans Variable", "IBM Plex Sans", "Inter Variable",
+    Inter, system-ui, -apple-system, sans-serif;
+}
+[data-font="roboto"] {
+  --cl-font-sans: "Roboto Variable", Roboto, "Helvetica Neue", "Inter Variable",
+    Inter, Arial, sans-serif;
+}
+[data-font="grotesk"] {
+  --cl-font-sans: "Space Grotesk Variable", "Space Grotesk", "Inter Variable",
+    Inter, system-ui, -apple-system, sans-serif;
+}
+
+[data-mono="system-mono"] {
+  --cl-font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+[data-mono="fira"] {
+  --cl-font-mono: "Fira Code Variable", "Fira Code", "JetBrains Mono Variable",
+    "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+[data-mono="plex-mono"] {
+  --cl-font-mono: "IBM Plex Mono", "JetBrains Mono Variable", "JetBrains Mono",
+    ui-monospace, Menlo, Consolas, monospace;
+}
+[data-mono="cascadia"] {
+  --cl-font-mono: "Cascadia Code Variable", "Cascadia Code", "Cascadia Mono",
+    Consolas, "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo,
+    monospace;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-tremor-background text-tremor-content;
+    font-family: var(--cl-font-sans);
+    margin: 0;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    background: var(--cl-selection-bg);
+    color: var(--cl-selection-fg);
+  }
+
+  /* Slim, theme-aware scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--cl-scrollbar-thumb) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--cl-scrollbar-thumb);
+    border-radius: 8px;
+    border: 3px solid var(--cl-bg);
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Visible, on-brand keyboard focus */
+  :focus-visible {
+    outline: 2px solid var(--cl-focus);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Machine data renders in mono */
+  td, pre, code, kbd, samp {
+    font-variant-ligatures: none;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Reusable component classes — used alongside Tremor primitives
+   ───────────────────────────────────────────────────────────────────────── */
+
+@layer components {
+  /* Sticky header chrome (translucent canvas + blur) */
+  .cl-header {
+    background: var(--cl-header-bg);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* Page title block */
+  .cl-title {
+    @apply text-xl font-semibold tracking-tight text-tremor-content-strong;
+  }
+  .cl-subtitle {
+    @apply text-tremor-content-subtle;
+  }
+
+  /* KPI stat: uppercase label + big mono number */
+  .cl-stat-label {
+    @apply text-[11px] font-medium uppercase tracking-[0.12em] text-tremor-content-subtle;
+  }
+  .cl-stat-value {
+    @apply mt-1.5 text-3xl font-semibold tabular-nums tracking-tight text-tremor-content-strong;
+  }
+
+  /* Data table cell typography */
+  .cl-mono {
+    font-family: var(--cl-font-mono);
+  }
+  .cl-ts {
+    @apply cl-mono text-xs whitespace-nowrap text-tremor-content-subtle;
+  }
+  .cl-msg {
+    @apply cl-mono text-[13px] text-tremor-content-emphasis;
+  }
+
+  /* Severity / level pill (static classes only — Tailwind-safe) */
+  .cl-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide;
+  }
+  .cl-pill-dot {
+    @apply h-1.5 w-1.5 rounded-full bg-current;
+  }
+
+  /* Inline error banner */
+  .cl-error-banner {
+    @apply rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300;
+  }
+
+  /* Empty / loading states */
+  .cl-empty {
+    @apply flex flex-col items-center justify-center gap-1 py-14 text-center;
+  }
+}

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>central-logs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css">
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #161b22;
+      --border: #30363d;
+      --fg: #e6edf3;
+      --muted: #8b949e;
+      --accent: #2f81f7;
+      --error: #ff7b72;
+      --warn: #d29922;
+      --ok: #3fb950;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+    header .gen { color: var(--muted); font-size: 12px; margin-left: auto; }
+    main { padding: 16px 24px; display: grid; gap: 16px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+    }
+    .panel h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 1024px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+    .stat { font-size: 28px; font-weight: 600; }
+    .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+    .level-debug { color: var(--muted); }
+    .level-info  { color: var(--ok); }
+    .level-warn  { color: var(--warn); }
+    .level-error { color: var(--error); }
+    .level-fatal { color: var(--error); font-weight: 600; }
+    input[type="text"] {
+      width: 100%; padding: 6px 10px; background: var(--bg); color: var(--fg);
+      border: 1px solid var(--border); border-radius: 4px; font-size: 13px;
+    }
+    .uplot { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>central-logs</h1>
+    <span class="gen">generated {{ generated_at.to_rfc3339() }}</span>
+  </header>
+  <main>
+    <section class="grid-3" hx-get="/api/counters" hx-trigger="every {{ refresh_secs }}s" hx-swap="none" id="counters">
+      <div class="panel">
+        <div class="stat" id="stat-records">—<span class="label">records received</span></div>
+      </div>
+      <div class="panel">
+        <div class="stat" id="stat-bytes">—<span class="label">bytes received</span></div>
+      </div>
+      <div class="panel">
+        <div class="stat" id="stat-errors">—<span class="label">insert errors</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Volume — last 1 hour (per minute)</h2>
+      <div id="chart-volume"></div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <h2>Levels — last 1 hour</h2>
+        <div id="table-levels"></div>
+      </div>
+      <div class="panel">
+        <h2>Top services</h2>
+        <div id="table-topn"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Search logs (last 1 hour, max 100 rows)</h2>
+      <input type="text" id="search-q" placeholder="substring match (e.g. 'error', 'timeout')" />
+      <div id="table-search" style="margin-top: 12px;"></div>
+    </section>
+  </main>
+
+  <script>
+    function fmtNum(n) {
+      if (n == null) return '—';
+      if (n < 1000) return '' + n;
+      if (n < 1e6) return (n/1000).toFixed(1) + 'k';
+      if (n < 1e9) return (n/1e6).toFixed(1) + 'M';
+      return (n/1e9).toFixed(1) + 'G';
+    }
+
+    async function poll() {
+      try {
+        const r = await fetch('/api/counters');
+        const c = await r.json();
+        document.getElementById('stat-records').firstChild.nodeValue = fmtNum(c.records_total);
+        document.getElementById('stat-bytes').firstChild.nodeValue = fmtNum(c.bytes_total);
+        document.getElementById('stat-errors').firstChild.nodeValue = fmtNum(c.errors_total);
+      } catch (e) {}
+
+      try {
+        const r = await fetch('/api/volume?hours=1');
+        const series = await r.json();
+        drawVolume(series);
+      } catch (e) {}
+
+      try {
+        const r = await fetch('/api/levels?hours=1');
+        const rows = await r.json();
+        const html = '<table><tr><th>Level</th><th>Count</th></tr>' +
+          rows.map(r => `<tr><td class="level-${r.level}">${r.level}</td><td>${fmtNum(r.n)}</td></tr>`).join('') +
+          '</table>';
+        document.getElementById('table-levels').innerHTML = html;
+      } catch (e) {}
+
+      try {
+        const r = await fetch('/api/topn?hours=1');
+        const rows = await r.json();
+        const html = '<table><tr><th>Service</th><th>Count</th><th>Errors</th></tr>' +
+          rows.map(r => `<tr><td>${r.service || '(none)'}</td><td>${fmtNum(r.n)}</td><td>${fmtNum(r.errors)}</td></tr>`).join('') +
+          '</table>';
+        document.getElementById('table-topn').innerHTML = html;
+      } catch (e) {}
+    }
+
+    async function search() {
+      const q = document.getElementById('search-q').value.trim();
+      const r = await fetch('/api/search?q=' + encodeURIComponent(q) + '&limit=100');
+      const rows = await r.json();
+      const html = '<table><tr><th>Time</th><th>Service</th><th>Level</th><th>Message</th></tr>' +
+        (rows.length ? rows.map(r => `<tr><td>${r.ts}</td><td>${r.service||''}</td><td class="level-${r.level||'info'}">${r.level||''}</td><td>${(r.message||'').replace(/</g,'&lt;')}</td></tr>`).join('') : '<tr><td colspan="4" style="color:#8b949e">No rows</td></tr>') +
+        '</table>';
+      document.getElementById('table-search').innerHTML = html;
+    }
+
+    let volChart = null;
+    function drawVolume(series) {
+      if (!series || !series.length || typeof uPlot === 'undefined') return;
+      const ts = series.map(p => new Date(p.ts).getTime() / 1000);
+      const vs = series.map(p => p.n);
+      const data = [ts, vs];
+      const opts = {
+        width: Math.max(600, document.querySelector('.panel').clientWidth - 40),
+        height: 220,
+        series: [
+          {},
+          { label: 'records/min', stroke: '#2f81f7', fill: 'rgba(47,129,247,0.2)', width: 2 }
+        ],
+        scales: { x: { time: true } }
+      };
+      if (volChart) volChart.setData(data); else volChart = new uPlot(opts, data, document.getElementById('chart-volume'));
+    }
+
+    document.getElementById('search-q').addEventListener('input', () => {
+      clearTimeout(window.__searchT);
+      window.__searchT = setTimeout(search, 300);
+    });
+
+    poll();
+    setInterval(poll, ({{ refresh_secs }}) * 1000);
+    search();
+  </script>
+</body>
+</html>

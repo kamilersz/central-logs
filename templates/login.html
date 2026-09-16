@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>central-logs — sign in</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #161b22;
+      --border: #30363d;
+      --fg: #e6edf3;
+      --muted: #8b949e;
+      --accent: #2f81f7;
+      --error: #ff7b72;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 32px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    h1 { font-size: 20px; margin: 0 0 8px; font-weight: 600; }
+    p.hint { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+    label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    input[type="password"] {
+      width: 100%; padding: 10px 12px; background: var(--bg); color: var(--fg);
+      border: 1px solid var(--border); border-radius: 4px; font-size: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    input[type="password"]:focus { outline: none; border-color: var(--accent); }
+    button {
+      width: 100%; margin-top: 16px; padding: 10px 16px; background: var(--accent);
+      color: white; border: none; border-radius: 4px; font-size: 14px; font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.1); }
+    .error {
+      color: var(--error); font-size: 13px; margin-top: 12px;
+      padding: 8px 12px; background: rgba(255,123,114,0.1); border-radius: 4px;
+      border: 1px solid rgba(255,123,114,0.3);
+    }
+    .footer { margin-top: 24px; color: var(--muted); font-size: 11px; text-align: center; }
+    .footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>central-logs</h1>
+    <p class="hint">Sign in with an API key to continue.</p>
+    {% if !error.is_empty() %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="POST" action="/login" autocomplete="off">
+      <label for="api_key">API key</label>
+      <input id="api_key" name="api_key" type="password" required autofocus
+             placeholder="clk_…" />
+      <button type="submit">Sign in</button>
+    </form>
+    <div class="footer">
+      API clients may also send <code>Authorization: Bearer &lt;key&gt;</code>.
+    </div>
+  </div>
+</body>
+</html>
