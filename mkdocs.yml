@@ -16,7 +16,7 @@ docs_dir: docs
 # single moving binary. Uncomment + add a `versions:` block in
 # .readthedocs.yaml once a stable release branch is cut.
 theme:
-  name: material
+  name: mkdocs
   features:
     - navigation.tabs
     - navigation.tabs.sticky
