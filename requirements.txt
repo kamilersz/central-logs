@@ -1,16 +1,24 @@
-# Pinned build deps for Read the Docs.
+# Build dependencies for Read the Docs.
 #
-# Read the Docs runs `pip install -r requirements.txt` in the build
-# environment before invoking mkdocs. Keep this list minimal — only
-# what's needed to *build* the docs site, not to *run* central-logs.
+# INTENTIONALLY EMPTY.
 #
-# If you switch the builder (e.g. from mkdocs to sphinx), change this
-# file to match. See .readthedocs.yaml for the active configuration.
-
-mkdocs==1.6.1
-mkdocs-material==9.5.49
-# mkdocs-material's built-in search indexer requires these at build time.
-# (Pulled in transitively, pinned explicitly so RTD's resolver doesn't pick
-# newer versions with breaking renames.)
-pygments==2.18.0
-pymdown-extensions==10.12
+# The mkdocs build for this site is intentionally dependency-free:
+# the mkdocs.yml uses the bundled `mkdocs` theme and only Python-Markdown
+# extensions that ship with mkdocs core (no pymdownx, no pygments, no
+# mkdocs-material). RTD's pre-installed mkdocs environment provides
+# everything the build needs.
+#
+# When this file is present, RTD's mkdocs builder runs
+# `pip install -r requirements.txt` BEFORE `mkdocs build`. Leaving it
+# empty keeps that step a no-op — the build cannot fail on a missing
+# optional dependency, and the version of mkdocs RTD ships with is
+# the only one in the env.
+#
+# If you ever want to add mkdocs-material / pymdownx etc., add them
+# here AND be aware that:
+#   1. RTD's mkdocs builder may or may not run this install step
+#      depending on the workflow it picks (it has changed over time);
+#   2. Material's pymdownx chain pulls in pygments at runtime, so
+#      pygments needs to be pinned here too;
+#   3. RTD pins transitive versions, so mismatches can cause silent
+#   breakage months later.

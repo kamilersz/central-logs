@@ -3,6 +3,14 @@
 # This is the *only* configuration file RTD needs to build the site: nav,
 # theme, and the markdown extensions. The actual prose lives under
 # docs/index.md and friends.
+#
+# IMPORTANT — dependency-free build:
+# We use the `mkdocs` theme (bundled with the `mkdocs` package itself)
+# and Python-Markdown extensions that ship with mkdocs / Python-Markdown
+# core. No `mkdocs-material`, no `pymdownx`, no third-party requirements
+# — RTD's pre-installed mkdocs environment may or may not install our
+# requirements.txt before running `mkdocs build`, and a missing
+# optional dep is the fastest way to break every future build.
 site_name: central-logs
 site_description: >-
   Self-hosted, single-node centralized logging platform — ingest, store,
@@ -12,70 +20,39 @@ site_url: https://central-logs.readthedocs.io/
 
 docs_dir: docs
 
-# We don't ship a "latest" / "stable" split for now; central-logs is a
-# single moving binary. Uncomment + add a `versions:` block in
-# .readthedocs.yaml once a stable release branch is cut.
+# `mkdocs` theme (the built-in default; bundled with the `mkdocs`
+# package itself, so the build never depends on a requirements-file
+# install to succeed). If you later switch to `material`, also pin
+# mkdocs-material in requirements.txt AND ensure RTD's mkdocs builder
+# actually installs it.
 theme:
   name: mkdocs
-  features:
-    - navigation.tabs
-    - navigation.tabs.sticky
-    - navigation.sections
-    - navigation.indexes
-    - navigation.top
-    - search.highlight
-    - search.suggest
-    - content.code.copy
-    - content.tabs.link
-    - toc.follow
-  palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/weather-night
-        name: Switch to light mode
+  highlightjs: true
+  navigation_depth: 3
 
+# Python-Markdown extensions that ship with mkdocs / Python-Markdown
+# core. No third-party packages required — works in any RTD mkdocs
+# environment without a requirements-file install.
 markdown_extensions:
-  - admonition
-  - attr_list
-  - def_list
-  - footnotes
-  - md_in_html
-  - tables
+  - admonition           # !!! note, !!! warning, etc.
+  - attr_list            # {: .class key=value} on headings/blocks
+  - def_list             # definition lists
+  - footnotes            # [^1] footnotes
+  - md_in_html           # markdown inside raw HTML
+  - tables               # GFM tables
   - toc:
       permalink: true
-  - pymdownx.details
-  - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
-      pygments_lang_class: true
-  - pymdownx.inlinehilite
-  - pymdownx.snippets
-  - pymdownx.superfences
-  - pymdownx.tabbed:
-      alternate_style: true
-
-# mkdocs-material adds the right-rail TOC features (we enable
-# `toc.follow` and `navigation.indexes` above). The TOC depth + permalink
-# default in mkdocs-material covers what we need; an explicit `toc:`
-# block here was rejected by mkdocs 1.6.
+  - fenced_code          # ``` blocks
+  - codehilite:
+      guess_lang: false  # don't try to guess from filename extension
 
 plugins:
   - search
 
 # Keep mkdocs permissive — broken anchors / unknown cross-doc links
-# warn but don't fail the build. Read the Docs does not surface those
-# warnings as failures either way, but explicitly disabling strict-mode
-# makes the build behavior obvious to anyone tweaking this file.
+# warn but don't fail the build. Explicitly off (instead of relying
+# on the default) so the build behavior is obvious to anyone tweaking
+# this file.
 strict: false
 
 # `llms.txt` lives next to the markdown under docs/ — mkdocs copies any
