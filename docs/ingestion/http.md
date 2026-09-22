@@ -119,5 +119,5 @@ on logging.
 
 - [Querying back with the filter DSL](../query.md)
 - [OpenTelemetry OTLP/HTTP ingest →](otlp.md)
-- [Integration samples →](integration-sample/README.md)
+- [Integration samples →](../integration-sample/README.md)
 - [Integration samples on GitHub →](https://github.com/kamilersz/central-logs/tree/main/integration-sample)

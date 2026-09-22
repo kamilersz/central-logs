@@ -1,7 +1,7 @@
 # Integration samples — inserting logs into central-logs
 
 Typed logger clients for `POST /v1/logs`, one per language. All follow the
-same contract as [`INTEGRATION.md`](INTEGRATION.md):
+same contract as [`INTEGRATION.md`](../INTEGRATION.md):
 
 > **Already using OpenTelemetry?** Don't hand-roll a client — point the OTel
 > SDK straight at central-logs over OTLP/HTTP (`/v1/traces`, `/v1/logs`,

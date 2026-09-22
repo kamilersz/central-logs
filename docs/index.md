@@ -64,6 +64,11 @@ source → insert layer → WAL (CRC-framed, fsync'd) → ingest workers → Duc
   `create_alert_rule`) over stdio; an **Ask AI** button in the SPA that
   translates natural-language queries into safe filter DSL via OpenAI /
   Anthropic.
+- **Performance** — 64 clients hammering the ingest endpoint at once,
+  ~20,000 durable lines per second on ~3 CPU cores, zero data loss, and a
+  backfill path that absorbs 100K lines in 2.5 seconds. The full test, with
+  instructions to reproduce it on your hardware.
+  → [Read the performance story](performance.md)
 
 ## Quick command
 

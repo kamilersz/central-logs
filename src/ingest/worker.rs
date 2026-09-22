@@ -118,6 +118,8 @@ async fn run_worker(
     let mut buf: Vec<LogRow> = Vec::with_capacity(batch_size);
     let mut last_flush = Instant::now();
     let mut pending_checkpoint: Option<Checkpoint> = None;
+    // Segment this worker last checkpointed (for releasing skipped segments).
+    let mut last_cp_segment = start.segment_id;
     // Phase timers (per flush-cycle aggregation; surfaced in flush! logs).
     let mut parse_ns: u128 = 0;
     let mut cursor_ns: u128 = 0;
@@ -143,6 +145,24 @@ async fn run_worker(
                 continue;
             }
         };
+        // Release fully-skipped segments: when the cursor crosses into a
+        // segment this worker doesn't own, the previous segments can never
+        // yield records for this shard again. Checkpointing the crossing
+        // lets `min_checkpoint` (pruning + the lag gauge) advance past them;
+        // safety is preserved because the shard OWNER's own checkpoint still
+        // gates deletion of the segment it is consuming.
+        {
+            let cur_seg = cursor.position().segment_id;
+            if cur_seg != last_cp_segment && !owns_segment(cur_seg, worker_id, total_workers) {
+                let cp = Checkpoint {
+                    segment_id: cur_seg,
+                    byte_offset: 0,
+                };
+                if meta.set_checkpoint(worker_id, cp).is_ok() {
+                    last_cp_segment = cur_seg;
+                }
+            }
+        }
         match entry {
             TailEntry::Record { rec, next } => {
                 // Shard filter: every worker READS every frame (cheap CRC +
@@ -173,6 +193,10 @@ async fn run_worker(
                         parse_ns = 0;
                         cursor_ns = 0;
                         all_ns = cycle0.elapsed().as_nanos();
+                        if let Some(cp) = pending_checkpoint {
+                            last_cp_segment = cp.segment_id;
+                        }
+                        pending_checkpoint = None;
                         last_flush = Instant::now();
                     }
                 }
@@ -202,6 +226,10 @@ async fn run_worker(
                     .await;
                     parse_ns = 0;
                     cursor_ns = 0;
+                    if let Some(cp) = pending_checkpoint {
+                        last_cp_segment = cp.segment_id;
+                    }
+                    pending_checkpoint = None;
                     last_flush = Instant::now();
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;

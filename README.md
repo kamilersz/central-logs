@@ -72,6 +72,39 @@ source → insert layer → WAL (CRC-framed, fsync'd) → ingest workers → Duc
   test-send button per channel. AI-created rules (MCP) always land in
   `pending_approval`; a human approves them before they can fire.
 
+## Performance
+
+Before trusting a logging server with your traffic, you'd want to know: how
+much can it actually take? So we pointed 64 programs at it and told them to
+write as fast as they could — then watched what happened.
+
+**The server never flinched.** It absorbed roughly **20,000 log lines every
+second, minute after minute**, while using about 3% of the machine's CPU and
+a sliver of the disk. Every single line was already safely on disk before
+the sender heard back — crash the server mid-storm and nothing you got an
+OK for is lost. Latency stayed flat at ~30 milliseconds, whether one client
+was writing or sixty-four.
+
+Need to backfill? Paste a giant NDJSON file in one request: **40,000 lines
+per second** get accepted, parsed, stored, and made searchable.
+
+And here's the part that surprises people: those 20,000 lines/second aren't
+a limit, they're a *policy*. The write path refuses to acknowledge a log
+until it's fsync'd to disk, and this NVMe syncs in ~10–30 ms — that's the
+whole bottleneck. Give it faster storage or bigger batches and it scales
+linearly from there; the CPU was mostly idle the entire time.
+
+The full methodology, raw numbers, and the torture scripts are in
+[`scripts/stress/RESULTS.md`](scripts/stress/RESULTS.md) — every result in
+this section can be re-created on your own machine with:
+
+```bash
+scripts/stress/run_stress.sh baseline 180 64
+```
+
+There's also a friendlier write-up with the hardware details on the
+[docs site](https://central-logs.readthedocs.io/) → *Performance*.
+
 ## Documentation
 
 The full documentation is published at
@@ -81,6 +114,7 @@ The full documentation is published at
 |---|---|
 | [docs/index.md](docs/index.md) | Site landing — high-level overview and section map |
 | [docs/getting-started.md](docs/getting-started.md) | Ten-minute quickstart (build, ship, query) |
+| [docs/performance.md](docs/performance.md) | The load-test story: numbers, why it holds up, how to reproduce |
 | [docs/llms.md](docs/llms.md) / [docs/llms.txt](docs/llms.txt) | For AI agents — recipe + discovery file |
 | [docs/API.md](docs/API.md) | HTTP API reference, filter DSL, MCP tools |
 | [docs/mcp.md](docs/mcp.md) | MCP server: tools, transport, agent recipes |

@@ -19,7 +19,7 @@ mechanics.
 ## Choosing a path
 
 - **You control the app code** → HTTP/NDJSON, with a typed client from
-  [`integration-sample/`](integration-sample/README.md). Lowest
+  [`integration-sample/`](../integration-sample/README.md). Lowest
   friction.
 - **The app is already instrumented with OpenTelemetry** → OTLP/HTTP.
   No new client, no collector, just point the SDK.

@@ -75,6 +75,7 @@ nav:
       - Alerts: alerts.md
       - Error Tracking: ERROR_TRACKING.md
       - AI features: ai.md
+      - Performance: performance.md
   - Operator Guide:
       - Install & deploy: install.md
       - Configuration: CONFIGURATION.md
