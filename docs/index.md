@@ -13,44 +13,23 @@ external database, no container required.
 
 ## Where to start
 
-<div class="grid cards" markdown>
+- **Getting Started** — have the server running and your first app
+  shipping logs in under ten minutes.
+  → [Start here](getting-started.md)
 
-- :material-rocket-launch:{ .lg .middle } **Getting Started**
+- **For AI agents** — how to let Claude Code, Codex, OpenCode, or your
+  own LLM use central-logs as a tool, including the recommended
+  `llms.txt` contract.
+  → [See agent guide](llms.md)
 
-    ---
+- **HTTP API reference** — every route, every scope, every
+  request/response shape. Filter DSL, alert rules, error groups,
+  MCP-style endpoints.
+  → [Browse the API](API.md)
 
-    Have the server running and your first app shipping logs in under ten
-    minutes.
-
-    [:octicons-arrow-right-24: Start here](getting-started.md)
-
-- :material-robot:{ .lg .middle } **For AI agents**
-
-    ---
-
-    How to let Claude Code, Codex, OpenCode, or your own LLM use
-    central-logs as a tool — including the recommended `llms.txt` contract.
-
-    [:octicons-arrow-right-24: See agent guide](llms.md)
-
-- :material-api:{ .lg .middle } **HTTP API reference**
-
-    ---
-
-    Every route, every scope, every request/response shape. Filter DSL,
-    alert rules, error groups, MCP-style endpoints.
-
-    [:octicons-arrow-right-24: Browse the API](API.md)
-
-- :material-cog:{ .lg .middle } **Configuration**
-
-    ---
-
-    CLI flags, env vars, TOML keys, retention/backup knobs, LLM providers.
-
-    [:octicons-arrow-right-24: Read the config guide](CONFIGURATION.md)
-
-</div>
+- **Configuration** — CLI flags, env vars, TOML keys, retention/backup
+  knobs, LLM providers.
+  → [Read the config guide](CONFIGURATION.md)
 
 ## What it does
 
