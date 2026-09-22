@@ -295,6 +295,17 @@ impl ErrorTracker {
     /// Fold error rows into `error_groups` and emit notifications. Runs with
     /// the store mutex already held (same guard as the batch insert).
     pub fn track(&self, conn: &Connection, rows: &[crate::store::LogRow]) {
+        // Aggregate error rows by fingerprint in memory BEFORE touching
+        // DuckDB. Groups are few but error rows can be many per flush; the
+        // previous per-row upsert (SELECT + JSON-array rewrite per row —
+        // ~ms per statement on an OLAP engine) made large flushes take
+        // seconds. One upsert per distinct group per flush instead.
+        let mut order: Vec<String> = Vec::new();
+        let mut aggs: std::collections::HashMap<String, GroupAgg> =
+            std::collections::HashMap::new();
+        let mut upsert_ms_total: u128 = 0;
+        let mut upsert_n: usize = 0;
+        let t_track = std::time::Instant::now();
         for row in rows {
             if row.fingerprint.is_empty() || !is_error_level(&row.level) {
                 continue;
@@ -309,28 +320,73 @@ impl ErrorTracker {
                 .get("exception_type")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string);
-            let ev = GroupEvent {
-                fingerprint: row.fingerprint.clone(),
-                service: row.service.clone(),
-                level: row.level.clone(),
-                title: truncate_chars(&row.message, 200),
-                exception_type: exc_type,
-                ts: row.ts,
-                stack,
-            };
-            match upsert_group(conn, self.cfg.samples_per_group, &ev) {
+            let agg = aggs.entry(row.fingerprint.clone()).or_insert_with(|| {
+                order.push(row.fingerprint.clone());
+                GroupAgg {
+                    ev: GroupEvent {
+                        fingerprint: row.fingerprint.clone(),
+                        service: row.service.clone(),
+                        level: row.level.clone(),
+                        title: truncate_chars(&row.message, 200),
+                        exception_type: exc_type,
+                        ts: row.ts,
+                        stack: stack.clone(),
+                    },
+                    count: 0,
+                    last_ts: row.ts,
+                    worst_level: row.level.clone(),
+                    samples: Vec::new(),
+                    variants: Vec::new(),
+                }
+            });
+            agg.count += 1;
+            if row.ts > agg.last_ts {
+                agg.last_ts = row.ts;
+            }
+            agg.worst_level = worst_level(&agg.worst_level, &row.level);
+            // Sample per distinct variant, capped (first variants win).
+            let vh = variant_hash(stack.as_deref().unwrap_or(&agg.ev.title));
+            if !agg.variants.contains(&vh) && agg.samples.len() < self.cfg.samples_per_group.max(1)
+            {
+                agg.samples.push(serde_json::json!({
+                    "variant_hash": vh,
+                    "first_seen": row.ts.to_rfc3339(),
+                    "stack": stack,
+                }));
+                agg.variants.push(vh);
+            }
+        }
+
+        // One transaction for the whole fold: autocommit would fsync the
+        // DuckDB WAL per statement (hundreds of point-writes per flush);
+        // batched, it's a single commit.
+        let tx = match conn.unchecked_transaction() {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::warn!(?e, "error-track: open transaction failed");
+                return;
+            }
+        };
+        for fp in &order {
+            let agg = &aggs[fp];
+            let ev = &agg.ev;
+            let t0 = std::time::Instant::now();
+            let res = upsert_group_agg(&tx, self.cfg.samples_per_group, ev, agg);
+            upsert_ms_total += t0.elapsed().as_millis();
+            upsert_n += 1;
+            match res {
                 Ok(Transition::Created) => {
                     if self.cfg.notify.on_new_group
-                        && level_meets(&ev.level, &self.cfg.notify.min_level)
+                        && level_meets(&agg.worst_level, &self.cfg.notify.min_level)
                     {
-                        self.send_notify(conn, "group.created", &ev);
+                        self.send_notify(conn, "group.created", ev);
                     }
                 }
                 Ok(Transition::Regressed) => {
                     if self.cfg.notify.on_regression
-                        && level_meets(&ev.level, &self.cfg.notify.min_level)
+                        && level_meets(&agg.worst_level, &self.cfg.notify.min_level)
                     {
-                        self.send_notify(conn, "group.regressed", &ev);
+                        self.send_notify(conn, "group.regressed", ev);
                     }
                 }
                 Ok(Transition::Updated) => {}
@@ -338,6 +394,19 @@ impl ErrorTracker {
                     tracing::warn!(?e, fp = %ev.fingerprint, "error-group upsert failed");
                 }
             }
+        }
+        let total_ms = t_track.elapsed().as_millis();
+        if let Err(e) = tx.commit() {
+            tracing::warn!(?e, "error-track: commit failed");
+        }
+        if total_ms > 100 {
+            tracing::info!(
+                rows = rows.len(),
+                groups = upsert_n,
+                upsert_ms = upsert_ms_total as u64,
+                total_ms = total_ms as u64,
+                "error-track timing"
+            );
         }
     }
 
@@ -372,9 +441,8 @@ fn query_group_basics(
     conn: &Connection,
     fingerprint: &str,
 ) -> Result<Option<(i64, DateTime<Utc>)>> {
-    let mut stmt = conn.prepare(
-        "SELECT total_count, first_seen FROM error_groups WHERE fingerprint = ?",
-    )?;
+    let mut stmt = conn
+        .prepare_cached("SELECT total_count, first_seen FROM error_groups WHERE fingerprint = ?")?;
     let mut rows = stmt.query(params![fingerprint])?;
     if let Some(r) = rows.next()? {
         return Ok(Some((r.get(0)?, r.get(1)?)));
@@ -384,11 +452,7 @@ fn query_group_basics(
 
 /// Insert-or-update one error group row. Read-then-write under the store
 /// mutex (single-writer semantics make this race-free without ON CONFLICT).
-pub fn upsert_group(
-    conn: &Connection,
-    samples_max: usize,
-    ev: &GroupEvent,
-) -> Result<Transition> {
+pub fn upsert_group(conn: &Connection, samples_max: usize, ev: &GroupEvent) -> Result<Transition> {
     let samples_max = samples_max.max(1);
     let vh = variant_hash(ev.stack.as_deref().unwrap_or(&ev.title));
     let new_sample = serde_json::json!({
@@ -397,15 +461,23 @@ pub fn upsert_group(
         "stack": ev.stack,
     });
 
-    let existing: Option<(String, Option<DateTime<Utc>>, i64, Option<String>, Option<String>, Option<String>)> = {
-        let mut stmt = conn.prepare(
+    let existing: Option<(
+        String,
+        Option<DateTime<Utc>>,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = {
+        let mut stmt = conn.prepare_cached(
             "SELECT status, resolved_at, total_count, title, samples, variant_hashes \
              FROM error_groups WHERE fingerprint = ?",
         )?;
         let mut rows = stmt.query(params![ev.fingerprint])?;
         if let Some(r) = rows.next()? {
             Some((
-                r.get::<_, Option<String>>(0)?.unwrap_or_else(|| "unresolved".into()),
+                r.get::<_, Option<String>>(0)?
+                    .unwrap_or_else(|| "unresolved".into()),
                 r.get(1)?,
                 r.get::<_, Option<i64>>(2)?.unwrap_or(0),
                 r.get(3)?,
@@ -441,7 +513,11 @@ pub fn upsert_group(
         }
         Some((status, resolved_at, total_count, prev_title, prev_samples, prev_variants)) => {
             let regressed = status == "resolved";
-            let new_status = if regressed { "unresolved" } else { status.as_str() };
+            let new_status = if regressed {
+                "unresolved"
+            } else {
+                status.as_str()
+            };
             let level = if ev.level == "fatal" || prev_title.is_none() {
                 ev.level.clone()
             } else {
@@ -495,7 +571,157 @@ pub fn upsert_group(
                     ev.fingerprint,
                 ],
             )?;
-            Ok(if regressed { Transition::Regressed } else { Transition::Updated })
+            Ok(if regressed {
+                Transition::Regressed
+            } else {
+                Transition::Updated
+            })
+        }
+    }
+}
+
+/// In-memory aggregate of many error rows sharing one fingerprint (see
+/// `ErrorTracker::track`).
+struct GroupAgg {
+    ev: GroupEvent,
+    count: u64,
+    last_ts: DateTime<Utc>,
+    worst_level: String,
+    samples: Vec<serde_json::Value>,
+    variants: Vec<String>,
+}
+
+/// Insert-or-update one error group from an aggregate of N folded rows.
+/// Same read-then-write semantics as [`upsert_group`], but applies `count`
+/// rows and merges every distinct sample collected for the flush in ONE
+/// statement pair — one group costs one SELECT + one write, not N.
+pub fn upsert_group_agg(
+    conn: &Connection,
+    samples_max: usize,
+    ev: &GroupEvent,
+    agg: &GroupAgg,
+) -> Result<Transition> {
+    let samples_max = samples_max.max(1);
+
+    let existing: Option<(
+        String,
+        Option<DateTime<Utc>>,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = {
+        let mut stmt = conn.prepare_cached(
+            "SELECT status, resolved_at, total_count, title, samples, variant_hashes \
+             FROM error_groups WHERE fingerprint = ?",
+        )?;
+        let mut rows = stmt.query(params![ev.fingerprint])?;
+        if let Some(r) = rows.next()? {
+            Some((
+                r.get::<_, Option<String>>(0)?
+                    .unwrap_or_else(|| "unresolved".into()),
+                r.get(1)?,
+                r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        } else {
+            None
+        }
+    };
+
+    match existing {
+        None => {
+            conn.execute(
+                "INSERT INTO error_groups \
+                 (fingerprint, service, level, title, exception_type, first_seen, last_seen, \
+                  total_count, status, samples, variant_hashes) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unresolved', ?, ?)",
+                params![
+                    ev.fingerprint,
+                    ev.service,
+                    agg.worst_level,
+                    ev.title,
+                    ev.exception_type,
+                    ev.ts,
+                    agg.last_ts,
+                    agg.count as i64,
+                    serde_json::to_string(&agg.samples)?,
+                    serde_json::to_string(&agg.variants)?,
+                ],
+            )?;
+            Ok(Transition::Created)
+        }
+        Some((status, resolved_at, total_count, prev_title, prev_samples, prev_variants)) => {
+            let regressed = status == "resolved";
+            let new_status = if regressed {
+                "unresolved"
+            } else {
+                status.as_str()
+            };
+            let level = if agg.worst_level == "fatal" || prev_title.is_none() {
+                agg.worst_level.clone()
+            } else {
+                // Never downgrade a group's max-severity label.
+                worst_level(&level_of_status(&status), &agg.worst_level)
+            };
+            // Samples: keep the FIRST sample at slot 0 forever; remaining
+            // slots rotate to hold the newest distinct variants.
+            let mut variants: Vec<String> = prev_variants
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_default();
+            let mut samples: Vec<serde_json::Value> = prev_samples
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
+                .unwrap_or_default();
+            for (new_sample, new_vh) in agg.samples.iter().zip(agg.variants.iter()) {
+                if variants.contains(new_vh) {
+                    continue;
+                }
+                if samples.len() < samples_max {
+                    samples.push(new_sample.clone());
+                    variants.push(new_vh.clone());
+                } else if samples.len() >= 2 {
+                    // Rotate out the OLDEST non-first slot (slot 1).
+                    samples.remove(1);
+                    variants.remove(1);
+                    samples.push(new_sample.clone());
+                    variants.push(new_vh.clone());
+                } else {
+                    break;
+                }
+            }
+            conn.execute(
+                "UPDATE error_groups SET \
+                    last_seen = GREATEST(last_seen, ?), \
+                    total_count = ?, \
+                    level = ?, \
+                    status = ?, \
+                    resolved_at = ?, \
+                    title = ?, \
+                    samples = ?, \
+                    variant_hashes = ? \
+                 WHERE fingerprint = ?",
+                params![
+                    agg.last_ts,
+                    total_count + agg.count as i64,
+                    level,
+                    new_status,
+                    if regressed { None } else { resolved_at },
+                    // Keep the original (usually most-representative) title.
+                    prev_title.unwrap_or_else(|| ev.title.clone()),
+                    serde_json::to_string(&samples)?,
+                    serde_json::to_string(&variants)?,
+                    ev.fingerprint,
+                ],
+            )?;
+            Ok(if regressed {
+                Transition::Regressed
+            } else {
+                Transition::Updated
+            })
         }
     }
 }
@@ -623,11 +849,19 @@ pub fn list_groups(conn: &Connection, p: &ListParams) -> Result<(Vec<ErrorGroup>
             level: r.get(2)?,
             title: r.get(3)?,
             exception_type: r.get(4)?,
-            first_seen: r.get::<_, Option<DateTime<Utc>>>(5)?.map(|t| t.to_rfc3339()),
-            last_seen: r.get::<_, Option<DateTime<Utc>>>(6)?.map(|t| t.to_rfc3339()),
+            first_seen: r
+                .get::<_, Option<DateTime<Utc>>>(5)?
+                .map(|t| t.to_rfc3339()),
+            last_seen: r
+                .get::<_, Option<DateTime<Utc>>>(6)?
+                .map(|t| t.to_rfc3339()),
             total_count: r.get::<_, Option<i64>>(7)?.unwrap_or(0),
-            status: r.get::<_, Option<String>>(8)?.unwrap_or_else(|| "unresolved".into()),
-            resolved_at: r.get::<_, Option<DateTime<Utc>>>(9)?.map(|t| t.to_rfc3339()),
+            status: r
+                .get::<_, Option<String>>(8)?
+                .unwrap_or_else(|| "unresolved".into()),
+            resolved_at: r
+                .get::<_, Option<DateTime<Utc>>>(9)?
+                .map(|t| t.to_rfc3339()),
         })
     })?;
     let mut out = Vec::new();
@@ -652,7 +886,11 @@ pub struct SparkPoint {
     pub count: i64,
 }
 
-pub fn get_group(conn: &Connection, fingerprint: &str, spark_window_secs: i64) -> Result<Option<ErrorGroupDetail>> {
+pub fn get_group(
+    conn: &Connection,
+    fingerprint: &str,
+    spark_window_secs: i64,
+) -> Result<Option<ErrorGroupDetail>> {
     let mut stmt = conn.prepare(
         "SELECT fingerprint, service, level, title, exception_type, first_seen, last_seen, \
                 total_count, status, resolved_at, samples \
@@ -668,11 +906,19 @@ pub fn get_group(conn: &Connection, fingerprint: &str, spark_window_secs: i64) -
         level: r.get(2)?,
         title: r.get(3)?,
         exception_type: r.get(4)?,
-        first_seen: r.get::<_, Option<DateTime<Utc>>>(5)?.map(|t| t.to_rfc3339()),
-        last_seen: r.get::<_, Option<DateTime<Utc>>>(6)?.map(|t| t.to_rfc3339()),
+        first_seen: r
+            .get::<_, Option<DateTime<Utc>>>(5)?
+            .map(|t| t.to_rfc3339()),
+        last_seen: r
+            .get::<_, Option<DateTime<Utc>>>(6)?
+            .map(|t| t.to_rfc3339()),
         total_count: r.get::<_, Option<i64>>(7)?.unwrap_or(0),
-        status: r.get::<_, Option<String>>(8)?.unwrap_or_else(|| "unresolved".into()),
-        resolved_at: r.get::<_, Option<DateTime<Utc>>>(9)?.map(|t| t.to_rfc3339()),
+        status: r
+            .get::<_, Option<String>>(8)?
+            .unwrap_or_else(|| "unresolved".into()),
+        resolved_at: r
+            .get::<_, Option<DateTime<Utc>>>(9)?
+            .map(|t| t.to_rfc3339()),
     };
     let samples: serde_json::Value = r
         .get::<_, Option<String>>(10)?
@@ -696,11 +942,19 @@ pub fn get_group(conn: &Connection, fingerprint: &str, spark_window_secs: i64) -
     for s in spark_rows {
         spark.push(s?);
     }
-    Ok(Some(ErrorGroupDetail { group, samples, spark }))
+    Ok(Some(ErrorGroupDetail {
+        group,
+        samples,
+        spark,
+    }))
 }
 
 pub fn set_status(conn: &Connection, fingerprint: &str, status: &str) -> Result<bool> {
-    let resolved_at = if status == "resolved" { Some(Utc::now()) } else { None };
+    let resolved_at = if status == "resolved" {
+        Some(Utc::now())
+    } else {
+        None
+    };
     let n = conn.execute(
         "UPDATE error_groups SET status = ?, resolved_at = ? WHERE fingerprint = ?",
         params![status, resolved_at, fingerprint],
@@ -746,7 +1000,11 @@ mod tests {
     #[test]
     fn exception_fingerprint_ignores_line_numbers() {
         let frames_a = vec![("m".to_string(), "handle".to_string(), "app.py".to_string())];
-        let frames_b = vec![("m".to_string(), "handle".to_string(), "app.py:117".to_string())];
+        let frames_b = vec![(
+            "m".to_string(),
+            "handle".to_string(),
+            "app.py:117".to_string(),
+        )];
         // filename differs → different group (filenames are part of identity),
         // but value noise does not split:
         let v1 = exception_fingerprint("ValueError", "bad input 42", &frames_a);
@@ -757,7 +1015,10 @@ mod tests {
 
     #[test]
     fn truncate_stack_respects_frames_and_bytes() {
-        let stack = (0..200).map(|i| format!("frame {i}")).collect::<Vec<_>>().join("\n");
+        let stack = (0..200)
+            .map(|i| format!("frame {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let (out, truncated) = truncate_stack(&stack, 100, 1 << 20);
         assert!(truncated);
         assert_eq!(out.lines().count(), 100);
@@ -782,8 +1043,10 @@ mod tests {
     fn test_conn() -> (tempfile::TempDir, Connection) {
         let tmp = tempfile::tempdir().unwrap();
         let conn = Connection::open(tmp.path().join("t.duckdb")).unwrap();
-        conn.execute_batch(crate::store::schema::ERROR_GROUPS_DDL).unwrap();
-        conn.execute_batch(crate::store::schema::ROLLUP_ERROR_1M_DDL).unwrap();
+        conn.execute_batch(crate::store::schema::ERROR_GROUPS_DDL)
+            .unwrap();
+        conn.execute_batch(crate::store::schema::ROLLUP_ERROR_1M_DDL)
+            .unwrap();
         (tmp, conn)
     }
 
@@ -833,7 +1096,10 @@ mod tests {
         let arr = detail.samples.as_array().unwrap();
         assert_eq!(arr.len(), 3, "capped at samples_per_group");
         assert_eq!(arr[0]["stack"], "variant one", "first sample is kept");
-        assert_eq!(arr[1]["stack"], "variant three", "oldest non-first rotated out");
+        assert_eq!(
+            arr[1]["stack"], "variant three",
+            "oldest non-first rotated out"
+        );
         assert_eq!(arr[2]["stack"], "variant four", "newest variant is last");
     }
 
@@ -849,8 +1115,11 @@ mod tests {
         let ev = sample_ev("fp3", None);
         upsert_group(&conn, 3, &ev).unwrap();
         // Simulate an over-count.
-        conn.execute("UPDATE error_groups SET total_count = 99 WHERE fingerprint = 'fp3'", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE error_groups SET total_count = 99 WHERE fingerprint = 'fp3'",
+            [],
+        )
+        .unwrap();
         let n = reconcile(&conn).unwrap();
         assert_eq!(n, 1);
         let detail = get_group(&conn, "fp3", 3600).unwrap().unwrap();

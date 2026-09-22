@@ -33,7 +33,9 @@ async fn dashboard_index(State(_st): State<WebState>) -> impl IntoResponse {
         refresh_secs: 5,
         generated_at: chrono::Utc::now(),
     };
-    let body = tmpl.render().unwrap_or_else(|e| format!("template error: {e}"));
+    let body = tmpl
+        .render()
+        .unwrap_or_else(|e| format!("template error: {e}"));
     Html(body)
 }
 
@@ -42,10 +44,7 @@ pub struct TimeRange {
     pub hours: Option<i64>,
 }
 
-async fn api_volume(
-    State(st): State<WebState>,
-    Query(q): Query<TimeRange>,
-) -> impl IntoResponse {
+async fn api_volume(State(st): State<WebState>, Query(q): Query<TimeRange>) -> impl IntoResponse {
     let hours = q.hours.unwrap_or(1).max(1);
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
     let conn = st.store.conn();
@@ -80,9 +79,9 @@ async fn api_levels(State(st): State<WebState>, Query(q): Query<TimeRange>) -> i
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
     let conn = st.store.conn();
     let conn = conn.lock();
-    let mut stmt = match conn.prepare(
-        "SELECT level, SUM(n)::BIGINT AS n FROM rollup_1m WHERE bucket >= ? GROUP BY 1",
-    ) {
+    let mut stmt = match conn
+        .prepare("SELECT level, SUM(n)::BIGINT AS n FROM rollup_1m WHERE bucket >= ? GROUP BY 1")
+    {
         Ok(s) => s,
         Err(e) => return axum::Json(serde_json::json!({"error": e.to_string()})).into_response(),
     };
@@ -113,11 +112,13 @@ pub struct TopnParams {
 async fn api_topn(State(st): State<WebState>, Query(q): Query<TopnParams>) -> impl IntoResponse {
     let hours = q.hours.unwrap_or(1).max(1);
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
-    let filter =
-        match crate::web::api::compile_dashboard_filter(q.filter.as_deref(), st.store.hot_attributes()) {
-            Ok(f) => f,
-            Err(e) => return axum::Json(serde_json::json!({"error": e})).into_response(),
-        };
+    let filter = match crate::web::api::compile_dashboard_filter(
+        q.filter.as_deref(),
+        st.store.hot_attributes(),
+    ) {
+        Ok(f) => f,
+        Err(e) => return axum::Json(serde_json::json!({"error": e})).into_response(),
+    };
     let conn = st.store.conn();
     let conn = conn.lock();
     let (sql, params): (String, Vec<String>) = match filter {
@@ -264,20 +265,13 @@ async fn api_search(
 async fn metrics_text(State(st): State<WebState>) -> impl IntoResponse {
     let c = st.counters.snapshot();
     let mut out = String::new();
-    out.push_str(&format!("# HELP central_logs_records_total Total records received.\n"));
+    out.push_str(&format!(
+        "# HELP central_logs_records_total Total records received.\n"
+    ));
     out.push_str(&format!("# TYPE central_logs_records_total counter\n"));
-    out.push_str(&format!(
-        "central_logs_records_total {}\n",
-        c.records_total
-    ));
-    out.push_str(&format!(
-        "central_logs_bytes_total {}\n",
-        c.bytes_total
-    ));
-    out.push_str(&format!(
-        "central_logs_errors_total {}\n",
-        c.errors_total
-    ));
+    out.push_str(&format!("central_logs_records_total {}\n", c.records_total));
+    out.push_str(&format!("central_logs_bytes_total {}\n", c.bytes_total));
+    out.push_str(&format!("central_logs_errors_total {}\n", c.errors_total));
     out.push_str("# HELP central_logs_audit_dropped_total Self-audit events dropped (WAL channel saturated).\n");
     out.push_str("# TYPE central_logs_audit_dropped_total counter\n");
     out.push_str(&format!(
@@ -292,7 +286,9 @@ async fn metrics_text(State(st): State<WebState>) -> impl IntoResponse {
     out.push_str("# HELP central_logs_wal_channel_depth Entries waiting in the bounded insert->WAL channel.\n");
     out.push_str("# TYPE central_logs_wal_channel_depth gauge\n");
     out.push_str(&format!("central_logs_wal_channel_depth {depth}\n"));
-    out.push_str("# HELP central_logs_wal_channel_capacity Configured bound of the insert->WAL channel.\n");
+    out.push_str(
+        "# HELP central_logs_wal_channel_capacity Configured bound of the insert->WAL channel.\n",
+    );
     out.push_str("# TYPE central_logs_wal_channel_capacity gauge\n");
     out.push_str(&format!("central_logs_wal_channel_capacity {capacity}\n"));
     out.push_str("# HELP central_logs_wal_bytes_written_total WAL bytes durably written.\n");
@@ -301,7 +297,9 @@ async fn metrics_text(State(st): State<WebState>) -> impl IntoResponse {
         "central_logs_wal_bytes_written_total {}\n",
         st.wal.bytes_written()
     ));
-    out.push_str("# HELP central_logs_ingest_lag_bytes WAL bytes not yet consumed by ingest workers.\n");
+    out.push_str(
+        "# HELP central_logs_ingest_lag_bytes WAL bytes not yet consumed by ingest workers.\n",
+    );
     out.push_str("# TYPE central_logs_ingest_lag_bytes gauge\n");
     out.push_str(&format!("central_logs_ingest_lag_bytes {lag}\n"));
     for (proto, pc) in c.per_protocol {
@@ -316,7 +314,10 @@ async fn metrics_text(State(st): State<WebState>) -> impl IntoResponse {
     }
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; version=0.0.4"),
+        )],
         out,
     )
         .into_response()
@@ -328,9 +329,11 @@ async fn health() -> impl IntoResponse {
 
 /// Tiny server-rendered Prometheus-ish text view (handy when curl'ing).
 pub async fn _render_metrics(_state: &WebState) -> String {
-    MetricsApiTemplate { generated_at: chrono::Utc::now() }
-        .render()
-        .unwrap_or_default()
+    MetricsApiTemplate {
+        generated_at: chrono::Utc::now(),
+    }
+    .render()
+    .unwrap_or_default()
 }
 
 #[allow(dead_code)]

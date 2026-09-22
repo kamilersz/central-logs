@@ -1,0 +1,16 @@
+# Pinned build deps for Read the Docs.
+#
+# Read the Docs runs `pip install -r requirements.txt` in the build
+# environment before invoking mkdocs. Keep this list minimal — only
+# what's needed to *build* the docs site, not to *run* central-logs.
+#
+# If you switch the builder (e.g. from mkdocs to sphinx), change this
+# file to match. See .readthedocs.yaml for the active configuration.
+
+mkdocs==1.6.1
+mkdocs-material==9.5.49
+# mkdocs-material's built-in search indexer requires these at build time.
+# (Pulled in transitively, pinned explicitly so RTD's resolver doesn't pick
+# newer versions with breaking renames.)
+pygments==2.18.0
+pymdown-extensions==10.12

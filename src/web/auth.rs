@@ -223,8 +223,11 @@ impl AuthState {
         store: Option<crate::store::Store>,
     ) -> Self {
         let auth_enabled = !keys.is_empty() || static_admin_key.is_some();
-        let map: HashMap<String, ApiKey> =
-            keys.into_iter().filter(|k| k.is_active()).map(|k| (k.key_hash.clone(), k)).collect();
+        let map: HashMap<String, ApiKey> = keys
+            .into_iter()
+            .filter(|k| k.is_active())
+            .map(|k| (k.key_hash.clone(), k))
+            .collect();
         Self {
             inner: Arc::new(AuthInner {
                 keys: RwLock::new(map),
@@ -332,7 +335,9 @@ impl AuthState {
     /// don't hammer DuckDB; the write runs on a blocking thread so the auth
     /// hot path never waits on the store lock.
     fn touch_key(&self, key_id: i64) {
-        let Some(store) = self.inner.store.clone() else { return };
+        let Some(store) = self.inner.store.clone() else {
+            return;
+        };
         let now = chrono::Utc::now();
         {
             let mut t = self.inner.key_touch.lock();
@@ -347,7 +352,13 @@ impl AuthState {
         // "Last used" column) show the touch immediately rather than only after
         // the next restart. Runs at the same 1/min cadence as the DB write, so
         // the first use in a window appears within ~1s.
-        if let Some(k) = self.inner.keys.write().values_mut().find(|k| k.id == key_id) {
+        if let Some(k) = self
+            .inner
+            .keys
+            .write()
+            .values_mut()
+            .find(|k| k.id == key_id)
+        {
             k.last_used_at = Some(now);
         }
         tracing::info!(key_id, "recording api key last_used_at touch");
@@ -482,9 +493,7 @@ pub fn required_scope(method: &axum::http::Method, path: &str) -> Option<Scope> 
     }
     // Error-group lifecycle mutations (resolve/unresolve/ignore).
     if path.starts_with("/api/error-groups/")
-        && (path.ends_with("/resolve")
-            || path.ends_with("/unresolve")
-            || path.ends_with("/ignore"))
+        && (path.ends_with("/resolve") || path.ends_with("/unresolve") || path.ends_with("/ignore"))
     {
         return Some(Scope::Write);
     }
@@ -493,7 +502,9 @@ pub fn required_scope(method: &axum::http::Method, path: &str) -> Option<Scope> 
         return Some(Scope::Admin);
     }
     // Alert approval / rejection — high blast radius, admin only.
-    if path.starts_with("/api/alert-rules/") && (path.ends_with("/approve") || path.ends_with("/reject")) {
+    if path.starts_with("/api/alert-rules/")
+        && (path.ends_with("/approve") || path.ends_with("/reject"))
+    {
         return Some(Scope::Admin);
     }
     // Alert rule + notification-channel mutations (create/update/delete/test).
@@ -590,7 +601,11 @@ fn cookie_session(req: &Request) -> Option<String> {
 /// scheme) or `X-API-Key: <k>`. Returns the raw key string.
 fn bearer_or_x_api_key(req: &Request) -> Option<String> {
     const BEARER_PREFIX: &str = "bearer "; // 7 ASCII bytes
-    if let Some(h) = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+    if let Some(h) = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
         if h.to_ascii_lowercase().starts_with(BEARER_PREFIX) {
             // SAFE: prefix is 7 ASCII bytes, all valid UTF-8 char boundaries.
             let token = h[BEARER_PREFIX.len()..].trim();
@@ -612,7 +627,11 @@ fn bearer_or_x_api_key(req: &Request) -> Option<String> {
 /// header or `?sentry_key=<k>` query parameter (the form browser SDKs use,
 /// since they cannot set custom headers cross-origin).
 fn sentry_key_from_request(req: &Request) -> Option<String> {
-    if let Some(h) = req.headers().get("x-sentry-auth").and_then(|v| v.to_str().ok()) {
+    if let Some(h) = req
+        .headers()
+        .get("x-sentry-auth")
+        .and_then(|v| v.to_str().ok())
+    {
         // Format: `Sentry sentry_key=<k>, sentry_timestamp=..., sentry_version=7`
         // — strip the leading auth-scheme token, then parse comma-separated
         // key=value pairs.
@@ -651,10 +670,9 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
+            if let Ok(b) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 out.push(b);
                 i += 3;
                 continue;
@@ -670,9 +688,7 @@ fn percent_decode(s: &str) -> String {
 /// makes it a session cookie (cleared when the browser closes); pass a value
 /// for persistent cookies.
 pub fn session_cookie_header(sid: &str, max_age_secs: Option<i64>) -> String {
-    let base = format!(
-        "{SESSION_COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/"
-    );
+    let base = format!("{SESSION_COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/");
     match max_age_secs {
         Some(s) => format!("{base}; Max-Age={s}"),
         None => base,
@@ -737,7 +753,8 @@ fn hex_encode(bytes: &[u8]) -> String {
 /// yet (which shouldn't happen — `apply_schema` creates it — but we tolerate
 /// it so the server can boot on a fresh DB without race conditions).
 pub fn load_api_keys(conn: &duckdb::Connection) -> Vec<ApiKey> {
-    let sql = "SELECT id, name, key_hash, key_prefix, scopes, created_at, last_used_at, revoked_at \
+    let sql =
+        "SELECT id, name, key_hash, key_prefix, scopes, created_at, last_used_at, revoked_at \
                FROM api_keys WHERE revoked_at IS NULL";
     let Ok(mut stmt) = conn.prepare(sql) else {
         return Vec::new();
@@ -967,8 +984,14 @@ mod tests {
             {
                 let conn = store.conn();
                 let c = conn.lock();
-                let mut stmt = c.prepare("SELECT last_used_at FROM api_keys WHERE id = 1").unwrap();
-                last_used = stmt.query_row([], |row| row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0)).unwrap();
+                let mut stmt = c
+                    .prepare("SELECT last_used_at FROM api_keys WHERE id = 1")
+                    .unwrap();
+                last_used = stmt
+                    .query_row([], |row| {
+                        row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0)
+                    })
+                    .unwrap();
             }
             if last_used.is_some() {
                 break;

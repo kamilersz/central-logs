@@ -205,7 +205,10 @@ fn apply_json_object(
 
     if let Some(svc) = pick_str_any(obj, &["service", "logger"]) {
         row.service = svc.to_string();
-    } else if let Some(svc) = inner.as_ref().and_then(|i| pick_str_any(i, &["service", "logger"])) {
+    } else if let Some(svc) = inner
+        .as_ref()
+        .and_then(|i| pick_str_any(i, &["service", "logger"]))
+    {
         row.service = svc.to_string();
     }
 
@@ -224,19 +227,28 @@ fn apply_json_object(
 
     if let Some(fp) = obj.get("fingerprint").and_then(Value::as_str) {
         row.fingerprint = fp.to_string();
-    } else if let Some(fp) = inner.as_ref().and_then(|i| i.get("fingerprint")).and_then(Value::as_str)
+    } else if let Some(fp) = inner
+        .as_ref()
+        .and_then(|i| i.get("fingerprint"))
+        .and_then(Value::as_str)
     {
         row.fingerprint = fp.to_string();
     }
 
     if let Some(t) = pick_str_any(obj, &["trace_id", "traceId"]) {
         row.trace_id = t.to_string();
-    } else if let Some(t) = inner.as_ref().and_then(|i| pick_str_any(i, &["trace_id", "traceId"])) {
+    } else if let Some(t) = inner
+        .as_ref()
+        .and_then(|i| pick_str_any(i, &["trace_id", "traceId"]))
+    {
         row.trace_id = t.to_string();
     }
     if let Some(s) = pick_str_any(obj, &["span_id", "spanId"]) {
         row.span_id = s.to_string();
-    } else if let Some(s) = inner.as_ref().and_then(|i| pick_str_any(i, &["span_id", "spanId"])) {
+    } else if let Some(s) = inner
+        .as_ref()
+        .and_then(|i| pick_str_any(i, &["span_id", "spanId"]))
+    {
         row.span_id = s.to_string();
     }
 
@@ -410,7 +422,12 @@ fn parse_syslog(body: &str) -> Option<Message<&str>> {
     }
 }
 
-fn apply_syslog(row: &mut LogRow, msg: &Message<&str>, body: &str, insert_ts: chrono::DateTime<Utc>) {
+fn apply_syslog(
+    row: &mut LogRow,
+    msg: &Message<&str>,
+    body: &str,
+    insert_ts: chrono::DateTime<Utc>,
+) {
     if let Some(ts) = msg.timestamp {
         row.ts = ts.with_timezone(&Utc);
     } else {
@@ -564,9 +581,7 @@ mod tests {
 
     #[test]
     fn hot_keys_dotted_path() {
-        let hot = vec![
-            HotAttribute::parse_shorthand("route:varchar:$.request.route").unwrap(),
-        ];
+        let hot = vec![HotAttribute::parse_shorthand("route:varchar:$.request.route").unwrap()];
         let parser = Parser::new(hot);
         let body = r#"{"msg":"x","request":{"route":"/health"}}"#;
         let r = parser.parse(&raw(body, Protocol::HttpJson));
@@ -594,8 +609,14 @@ mod tests {
         let body = r#"{"service":"api","msg":"hi","debug_payload":{"big":"blob"},"thread_local":"x","keep":"me"}"#;
         let r = parser.parse(&raw(body, Protocol::HttpJson));
         let obj = r.attributes.as_object().unwrap();
-        assert!(obj.get("debug_payload").is_none(), "dropped key must not persist");
-        assert!(obj.get("thread_local").is_none(), "dropped key must not persist");
+        assert!(
+            obj.get("debug_payload").is_none(),
+            "dropped key must not persist"
+        );
+        assert!(
+            obj.get("thread_local").is_none(),
+            "dropped key must not persist"
+        );
         assert_eq!(obj.get("keep"), Some(&serde_json::json!("me")));
     }
 
@@ -627,7 +648,8 @@ mod tests {
     #[test]
     fn message_json_reserved_fields_backfill_columns() {
         let parser = Parser::empty();
-        let body = r#"{"message":"{\"level\":\"error\",\"service\":\"worker\",\"trace_id\":\"abc\"}"}"#;
+        let body =
+            r#"{"message":"{\"level\":\"error\",\"service\":\"worker\",\"trace_id\":\"abc\"}"}"#;
         let r = parser.parse(&raw(body, Protocol::HttpJson));
         assert_eq!(r.level, "error");
         assert_eq!(r.service, "worker");
@@ -670,7 +692,10 @@ mod tests {
         let parser = Parser::empty();
         // Plain text, JSON array, JSON scalar — none are lifted.
         for msg in ["hello world", "[1,2,3]", "42"] {
-            let body = format!(r#"{{"service":"api","message":{}}}"#, serde_json::json!(msg));
+            let body = format!(
+                r#"{{"service":"api","message":{}}}"#,
+                serde_json::json!(msg)
+            );
             let r = parser.parse(&raw(&body, Protocol::HttpJson));
             assert!(
                 r.attributes.as_object().unwrap().is_empty(),

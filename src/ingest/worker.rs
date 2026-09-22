@@ -118,12 +118,27 @@ async fn run_worker(
     let mut buf: Vec<LogRow> = Vec::with_capacity(batch_size);
     let mut last_flush = Instant::now();
     let mut pending_checkpoint: Option<Checkpoint> = None;
+    // Phase timers (per flush-cycle aggregation; surfaced in flush! logs).
+    let mut parse_ns: u128 = 0;
+    let mut cursor_ns: u128 = 0;
+    let mut all_ns: u128 = 0;
+    let cycle0 = Instant::now();
 
     loop {
-        let entry = match cursor.next().await {
+        let entry = {
+            let t = Instant::now();
+            let e = cursor.next().await;
+            cursor_ns += (t.elapsed().as_nanos());
+            all_ns = cycle0.elapsed().as_nanos();
+            e
+        }
+        .map_err(|e| {
+            tracing::warn!(worker_id, ?e, "ingest cursor read failed");
+            e
+        });
+        let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                tracing::warn!(worker_id, ?e, "ingest cursor read failed");
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 continue;
             }
@@ -135,12 +150,14 @@ async fn run_worker(
                 // it. `next` still reflects the read position; foreign
                 // records simply never enter this worker's buffer.
                 if owns_segment(next.segment_id, worker_id, total_workers) {
+                    let t = Instant::now();
                     let mut row = parser.parse(&rec);
                     enricher.enrich(&mut row, parse_ip_from_addr(&rec.source_addr));
+                    parse_ns += t.elapsed().as_nanos();
                     buf.push(row);
                     pending_checkpoint = Some(next);
                     if buf.len() >= batch_size || last_flush.elapsed() >= flush_interval {
-                        flush(
+                        flush_timed(
                             &store,
                             &meta,
                             worker_id,
@@ -148,8 +165,14 @@ async fn run_worker(
                             pending_checkpoint,
                             &stats,
                             error_tracker.as_deref(),
+                            parse_ns,
+                            cursor_ns,
+                            all_ns,
                         )
                         .await;
+                        parse_ns = 0;
+                        cursor_ns = 0;
+                        all_ns = cycle0.elapsed().as_nanos();
                         last_flush = Instant::now();
                     }
                 }
@@ -164,7 +187,7 @@ async fn run_worker(
             }
             TailEntry::CaughtUp { .. } => {
                 if !buf.is_empty() && last_flush.elapsed() >= flush_interval {
-                    flush(
+                    flush_timed(
                         &store,
                         &meta,
                         worker_id,
@@ -172,13 +195,52 @@ async fn run_worker(
                         pending_checkpoint,
                         &stats,
                         error_tracker.as_deref(),
+                        parse_ns,
+                        cursor_ns,
+                        all_ns,
                     )
                     .await;
+                    parse_ns = 0;
+                    cursor_ns = 0;
                     last_flush = Instant::now();
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
+    }
+}
+
+/// Flush with per-phase timing logs (insert / error-track / checkpoint vs
+/// parse+enrich and cursor-read time). Keeps `flush` semantics identical.
+#[allow(clippy::too_many_arguments)]
+async fn flush_timed(
+    store: &Store,
+    meta: &WalMeta,
+    worker_id: u64,
+    buf: &mut Vec<LogRow>,
+    pending_checkpoint: Option<Checkpoint>,
+    stats: &Arc<Mutex<IngestStats>>,
+    error_tracker: Option<&crate::errors::ErrorTracker>,
+    parse_ns: u128,
+    cursor_ns: u128,
+    all_ns: u128,
+) {
+    let n = buf.len();
+    let t0 = Instant::now();
+    let before = stats.lock().records_ingested;
+    flush(store, meta, worker_id, buf, pending_checkpoint, stats, error_tracker).await;
+    let _ = before;
+    let ms = t0.elapsed().as_millis();
+    if ms > 50 {
+        tracing::info!(
+            worker_id,
+            n,
+            flush_ms = ms,
+            parse_ms = parse_ns / 1_000_000,
+            cursor_ms = cursor_ns / 1_000_000,
+            cycle_ms = all_ns / 1_000_000,
+            "ingest flush timing"
+        );
     }
 }
 
@@ -196,19 +258,38 @@ async fn flush(
     }
     let n = buf.len();
     let conn = store.lock();
-    match insert_batch(&conn, store.hot_attributes(), buf) {
+    let t_insert = Instant::now();
+    let insert_res = insert_batch(&conn, store.hot_attributes(), buf);
+    let insert_ms = t_insert.elapsed().as_millis();
+    let t_track = Instant::now();
+    let track_res = insert_res.map(|inserted| {
+        // Error tracking: fold the just-committed error rows into
+        // error_groups while we still hold the store lock.
+        if let Some(et) = error_tracker {
+            et.track(&conn, buf);
+        }
+        inserted
+    });
+    let track_ms = t_track.elapsed().as_millis();
+    match track_res {
         Ok(inserted) => {
-            tracing::debug!(worker_id, inserted, "ingest batch committed");
-            // Error tracking: fold the just-committed error rows into
-            // error_groups while we still hold the store lock.
-            if let Some(et) = error_tracker {
-                et.track(&conn, buf);
-            }
             buf.clear();
+            let t_cp = Instant::now();
             if let Some(cp) = pending_checkpoint {
                 if let Err(e) = meta.set_checkpoint(worker_id, cp) {
                     tracing::warn!(worker_id, ?e, "ingest: persist checkpoint failed");
                 }
+            }
+            let cp_ms = t_cp.elapsed().as_millis();
+            if insert_ms + track_ms + cp_ms > 200 {
+                tracing::info!(
+                    worker_id,
+                    n,
+                    insert_ms = insert_ms as u64,
+                    track_ms = track_ms as u64,
+                    checkpoint_ms = cp_ms as u64,
+                    "ingest flush breakdown"
+                );
             }
             let mut s = stats.lock();
             s.records_ingested += inserted as u64;
@@ -263,9 +344,7 @@ mod tests {
         use crate::RawRecord;
 
         let tmp = tempfile::tempdir().expect("tempdir");
-        let meta = Arc::new(
-            WalMeta::open(&tmp.path().join("meta.redb")).expect("wal meta"),
-        );
+        let meta = Arc::new(WalMeta::open(&tmp.path().join("meta.redb")).expect("wal meta"));
         let (writer, handle) = WalWriter::new(
             tmp.path().join("wal"),
             8 * 1024, // small segments → force rotation across many shards

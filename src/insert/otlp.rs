@@ -307,7 +307,10 @@ pub fn logs_to_records(
                     attrs.insert(kv.key.clone(), any_value_to_json_opt(&kv.value));
                 }
                 if !lr.severity_text.is_empty() {
-                    attrs.insert("severity_text".into(), Json::String(lr.severity_text.clone()));
+                    attrs.insert(
+                        "severity_text".into(),
+                        Json::String(lr.severity_text.clone()),
+                    );
                 }
                 if !lr.event_name.is_empty() {
                     attrs.insert("event_name".into(), Json::String(lr.event_name.clone()));
@@ -359,7 +362,10 @@ fn metric_to_records(
             attrs.insert("unit".into(), Json::String(metric.unit.clone()));
         }
         if !metric.description.is_empty() {
-            attrs.insert("description".into(), Json::String(metric.description.clone()));
+            attrs.insert(
+                "description".into(),
+                Json::String(metric.description.clone()),
+            );
         }
         for kv in &metric.metadata {
             attrs.insert(kv.key.clone(), any_value_to_json_opt(&kv.value));
@@ -574,7 +580,10 @@ fn base_attrs(
             m.insert("otel_scope_name".into(), Json::String(sc.name.clone()));
         }
         if !sc.version.is_empty() {
-            m.insert("otel_scope_version".into(), Json::String(sc.version.clone()));
+            m.insert(
+                "otel_scope_version".into(),
+                Json::String(sc.version.clone()),
+            );
         }
         for kv in &sc.attributes {
             m.insert(kv.key.clone(), any_value_to_json_opt(&kv.value));
@@ -696,7 +705,12 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
-fn record(proto: Protocol, obj: &Map<String, Json>, receive_ts: DateTime<Utc>, peer: &str) -> RawRecord {
+fn record(
+    proto: Protocol,
+    obj: &Map<String, Json>,
+    receive_ts: DateTime<Utc>,
+    peer: &str,
+) -> RawRecord {
     let bytes = serde_json::to_vec(&Json::Object(obj.clone())).unwrap_or_else(|_| b"{}".to_vec());
     RawRecord {
         receive_ts,
@@ -814,7 +828,9 @@ mod tests {
 
     #[test]
     fn metric_envelope_value_and_labels() {
-        use opentelemetry_proto::tonic::metrics::v1::{Gauge, Metric, ResourceMetrics, ScopeMetrics};
+        use opentelemetry_proto::tonic::metrics::v1::{
+            Gauge, Metric, ResourceMetrics, ScopeMetrics,
+        };
         let metric = Metric {
             name: "http.server.duration".into(),
             unit: "ms".into(),

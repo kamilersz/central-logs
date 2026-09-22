@@ -144,11 +144,7 @@ async fn run_udp(sock: UdpSocket, state: SyslogState, shutdown: CancellationToke
     }
 }
 
-async fn handle_tcp_conn(
-    stream: TcpStream,
-    peer: String,
-    state: SyslogState,
-) -> crate::Result<()> {
+async fn handle_tcp_conn(stream: TcpStream, peer: String, state: SyslogState) -> crate::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     loop {
@@ -173,7 +169,9 @@ async fn handle_tcp_conn(
         };
         state.counters.record(Protocol::SyslogTcp, bytes_len);
         // TCP supports backpressure — wait briefly for room.
-        match tokio::time::timeout(Duration::from_millis(250), state.handle.append_unacked(rec)).await {
+        match tokio::time::timeout(Duration::from_millis(250), state.handle.append_unacked(rec))
+            .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 tracing::warn!(?e, "tcp syslog: append failed");

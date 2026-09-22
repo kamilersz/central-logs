@@ -1,0 +1,99 @@
+# central-logs
+
+> Self-hosted, single-node centralized logging platform. One Rust binary.
+> One DuckDB file. One WAL directory. HTTP/JSON + OpenTelemetry OTLP/HTTP
+> + syslog + Sentry-SDK ingest. Dashboards, forecasting, anomaly
+> detection, error-group tracking, and a 5-tool MCP server for AI agents.
+
+This file is a discoverable index for LLM agents. The full prose is at
+the same host under `/` (Read the Docs renders the rest of the docs).
+
+## Capabilities
+
+- **Ingest**: NDJSON / JSON over `POST /v1/logs`; OTLP/HTTP on
+  `/v1/traces`, `/v1/logs`, `/v1/metrics` (protobuf + JSON); syslog UDP
+  + TCP on `:5140`; Sentry-SDK ingest on `/api/{project}/envelope/`
+  and `/api/{project}/store/`.
+- **Store**: DuckDB hot tier + hive-partitioned Parquet cold tier,
+  per-service retention.
+- **Query**: a safe filter DSL (`service:api level:error user_id:42`).
+- **Dashboards**: volume, error-rate, latency p50/p95/p99, anomalies,
+  forecast overlay. SPA + JSON API.
+- **Error tracking**: Sentry-compatible ingest, fingerprint grouping,
+  Errors SPA page, AI explain.
+- **Alerts**: filter DSL + threshold / anomaly / count /
+  error-group-threshold conditions; email / Telegram / webhook channels.
+- **AI features**: 5 MCP tools + an LLM-backed natural-language → filter
+  DSL endpoint (OpenAI / Anthropic / 9inference).
+- **Housekeeping**: backups to local + S3/GCS, restore, retention,
+  pipeline health metrics, Prometheus `/metrics`.
+
+## Index
+
+- Home — /
+- Getting Started — /getting-started/
+- For AI agents (this guide's full version) — /llms/
+- HTTP API reference — /API/
+- MCP tools — /mcp/
+- Query DSL — /query/
+- Configuration — /CONFIGURATION.md/
+- Security — /SECURITY.md/
+- Operations — /OPERATIONS.md/
+- Architecture — /ARCHITECTURE.md/
+- Error tracking — /ERROR_TRACKING.md/
+- Project status — /STATUS.md/
+- Development — /DEVELOPMENT.md/
+- Integration samples — /integration-sample/README.md
+
+## How agents should connect
+
+- **MCP (preferred)**: `central-logs --mcp-mode stdio`. Tools:
+  `query_logs`, `get_dashboard_summary`, `detect_anomalies`, `forecast`,
+  `create_alert_rule`. `create_alert_rule` is gated behind
+  `--enable-alert-mcp-tool`; every rule it creates lands in
+  `pending_approval` and needs a human to approve before firing.
+- **HTTP**: every endpoint is JSON + bearer auth (`clk_...` API keys
+  scoped to `insert` / `read` / `write` / `admin`).
+
+## Record shape
+
+Every inserted record carries:
+
+```
+{
+  "service":   "<primary filter key>",
+  "level":     "info" | "warn" | "error" | "debug" | "fatal",
+  "msg":       "<free text>",
+  "ts":        "< RFC3339 or unix seconds, optional>",
+  "trace_id":  "<correlation, optional>",
+  "duration_ms": <number, feeds latency dashboards, optional>,
+  ...          <everything else becomes queryable attributes>
+}
+```
+
+## Safety
+
+- Filter DSL compiles to parameterized statements; unknown columns are
+  rejected at parse time.
+- Alert rules created via MCP always need human approval.
+- Per-service query caps prevent one wide scan from squeezing the node.
+- WAL cap refuses inserts (503) before disk fills.
+
+## What it does not do
+
+- No cluster / multi-node (one binary per box).
+- No separate database server (DuckDB is embedded).
+- OTLP/gRPC (port 4317) is not implemented — use OTLP/HTTP.
+- Remote MCP transport (SSE / streamable-HTTP) is not implemented —
+  stdio only in this version. `mcp_mode = sse` is rejected at startup.
+
+## Auth model
+
+- Static admin: `CENTRAL_LOGS_HTTP_API_KEY` env var (recommended).
+- CRUD keys via `POST /v1/api-keys` (admin required). Raw value shown
+  once, stored as SHA-256 hash.
+- Browser sessions via `POST /api/auth/login` → `cl_session` cookie.
+
+## License
+
+MIT.

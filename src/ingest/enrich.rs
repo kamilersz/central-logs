@@ -34,8 +34,7 @@ pub struct Enricher {
 
 impl Enricher {
     pub fn new(
-        #[cfg(feature = "geoip")]
-        geo: Option<std::sync::Arc<GeoEnricher>>,
+        #[cfg(feature = "geoip")] geo: Option<std::sync::Arc<GeoEnricher>>,
         default_service: &str,
         default_host: &str,
     ) -> Self {

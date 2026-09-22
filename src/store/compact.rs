@@ -80,7 +80,11 @@ pub fn compact_once(
         String::new()
     } else {
         let quoted: Vec<String> = bloom_cols.iter().map(|c| format!("'{c}'")).collect();
-        format!(", BLOOM_FILTER ({}), BLOOM_FILTER_COLUMNS ({})", true, quoted.join(", "))
+        format!(
+            ", BLOOM_FILTER ({}), BLOOM_FILTER_COLUMNS ({})",
+            true,
+            quoted.join(", ")
+        )
     };
 
     for (d, h, svc) in &groups {
@@ -88,7 +92,10 @@ pub fn compact_once(
         let svc_dir = sanitize_service(&svc_raw);
         let sub_dir = format!("{dir_str}/date={d}/hour={h}/service={svc_dir}");
         std::fs::create_dir_all(&sub_dir)?;
-        let part_path = format!("{sub_dir}/part-{}.parquet", chrono::Utc::now().timestamp_millis());
+        let part_path = format!(
+            "{sub_dir}/part-{}.parquet",
+            chrono::Utc::now().timestamp_millis()
+        );
 
         // ORDER BY ts, service clusters data so row-group min/max statistics
         // prune efficiently for time-range + service filters. ROW_GROUP_SIZE
@@ -117,7 +124,12 @@ pub fn compact_once(
             bloom = bloom_clause,
         );
         let mut stmt = conn.prepare(&export_sql)?;
-        stmt.execute(duckdb::params![hot_cutoff, d.as_str(), h.as_str(), svc.as_deref()])?;
+        stmt.execute(duckdb::params![
+            hot_cutoff,
+            d.as_str(),
+            h.as_str(),
+            svc.as_deref()
+        ])?;
         drop(stmt);
         stats.exported_files += 1;
     }
@@ -149,8 +161,9 @@ pub fn enforce_hot_cap(
     compression: &str,
     service_retention: &[ServiceRetention],
 ) -> Result<u64> {
-    let hot_bytes: i64 =
-        conn.query_row("SELECT COALESCE(SUM(raw_len), 0) FROM logs", [], |r| r.get(0))?;
+    let hot_bytes: i64 = conn.query_row("SELECT COALESCE(SUM(raw_len), 0) FROM logs", [], |r| {
+        r.get(0)
+    })?;
     if (hot_bytes as u64) <= cap_bytes {
         return Ok(0);
     }
@@ -159,17 +172,17 @@ pub fn enforce_hot_cap(
     // passes so a pathological cap can't loop forever — retention_days will
     // eventually purge anyway).
     for _ in 0..48 {
-        let hot_bytes: i64 = conn
-            .query_row("SELECT COALESCE(SUM(raw_len), 0) FROM logs", [], |r| r.get(0))?;
+        let hot_bytes: i64 =
+            conn.query_row("SELECT COALESCE(SUM(raw_len), 0) FROM logs", [], |r| {
+                r.get(0)
+            })?;
         if (hot_bytes as u64) <= cap_bytes {
             break;
         }
         let cutoff: Option<chrono::DateTime<chrono::Utc>> = conn
-            .query_row(
-                "SELECT MIN(ts) + INTERVAL '1 hour' FROM logs",
-                [],
-                |r| r.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0),
-            )
+            .query_row("SELECT MIN(ts) + INTERVAL '1 hour' FROM logs", [], |r| {
+                r.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0)
+            })
             .unwrap_or(None);
         let Some(cutoff) = cutoff else { break };
         let stats = compact_once(
@@ -226,7 +239,9 @@ fn purge_old_parquet(
     };
     for date_entry in date_entries.flatten() {
         let date_name = date_entry.file_name();
-        let Some(date_name) = date_name.to_str() else { continue };
+        let Some(date_name) = date_name.to_str() else {
+            continue;
+        };
         let Some(date) = date_name.strip_prefix("date=") else {
             continue;
         };
@@ -236,7 +251,9 @@ fn purge_old_parquet(
         };
         for hour_entry in hour_entries.flatten() {
             let hour_name = hour_entry.file_name();
-            let Some(hour_name) = hour_name.to_str() else { continue };
+            let Some(hour_name) = hour_name.to_str() else {
+                continue;
+            };
             if !hour_name.starts_with("hour=") {
                 continue;
             }
@@ -249,19 +266,25 @@ fn purge_old_parquet(
             };
             for svc_entry in svc_entries.flatten() {
                 let svc_name = svc_entry.file_name();
-                let Some(svc_name) = svc_name.to_str() else { continue };
+                let Some(svc_name) = svc_name.to_str() else {
+                    continue;
+                };
                 let Some(svc_val) = svc_name.strip_prefix("service=") else {
                     continue;
                 };
                 has_service_dirs = true;
-                let days = retention_days_for(svc_val, service_retention, retention_days.max(0) as u64) as i64;
+                let days =
+                    retention_days_for(svc_val, service_retention, retention_days.max(0) as u64)
+                        as i64;
                 let cutoff = (now - chrono::Duration::days(days))
                     .format("%Y-%m-%d")
                     .to_string();
                 if date < cutoff.as_str() {
                     match std::fs::remove_dir_all(svc_entry.path()) {
                         Ok(()) => stats.purged_files += 1,
-                        Err(e) => tracing::warn!(?e, path = %svc_entry.path().display(), "purge parquet failed"),
+                        Err(e) => {
+                            tracing::warn!(?e, path = %svc_entry.path().display(), "purge parquet failed")
+                        }
                     }
                 }
             }
@@ -270,7 +293,9 @@ fn purge_old_parquet(
             if !has_service_dirs && date < global_cutoff.as_str() {
                 match std::fs::remove_dir_all(hour_entry.path()) {
                     Ok(()) => stats.purged_files += 1,
-                    Err(e) => tracing::warn!(?e, path = %hour_entry.path().display(), "purge legacy parquet failed"),
+                    Err(e) => {
+                        tracing::warn!(?e, path = %hour_entry.path().display(), "purge legacy parquet failed")
+                    }
                 }
             }
             // Best-effort: drop hour dirs emptied by service purges.
@@ -434,9 +459,16 @@ mod tests {
             .map(|a| a.name.as_str())
             .collect();
         let quoted: Vec<String> = bloom_cols.iter().map(|c| format!("'{c}'")).collect();
-        let bloom_clause = format!(", BLOOM_FILTER ({}), BLOOM_FILTER_COLUMNS ({})", true, quoted.join(", "));
+        let bloom_clause = format!(
+            ", BLOOM_FILTER ({}), BLOOM_FILTER_COLUMNS ({})",
+            true,
+            quoted.join(", ")
+        );
         assert!(bloom_clause.contains("'trace_id'"));
-        assert!(!bloom_clause.contains("'user_id'"), "bigint cols should not be bloom-filtered: {bloom_clause}");
+        assert!(
+            !bloom_clause.contains("'user_id'"),
+            "bigint cols should not be bloom-filtered: {bloom_clause}"
+        );
     }
 
     #[test]
@@ -474,13 +506,20 @@ mod tests {
         // Deterministic: same input → same output.
         assert_eq!(s, sanitize_service("My Service/2"));
         // Distinct raw names don't collide after sanitization.
-        assert_ne!(sanitize_service("My Service/2"), sanitize_service("My_Service_2"));
+        assert_ne!(
+            sanitize_service("My Service/2"),
+            sanitize_service("My_Service_2")
+        );
     }
 
     #[test]
     fn sanitize_service_empty_and_trailing_dot() {
         assert!(sanitize_service("").starts_with("unknown--"));
-        assert!(sanitize_service("svc.").starts_with("svc--"), "got {}", sanitize_service("svc."));
+        assert!(
+            sanitize_service("svc.").starts_with("svc--"),
+            "got {}",
+            sanitize_service("svc.")
+        );
         assert!(sanitize_service("....").starts_with("unknown--"));
     }
 
@@ -500,8 +539,14 @@ mod tests {
     fn retention_rules_first_match_wins() {
         use crate::config::ServiceRetention;
         let rules = vec![
-            ServiceRetention { pattern: "audit_*".into(), days: 90 },
-            ServiceRetention { pattern: "*".into(), days: 7 },
+            ServiceRetention {
+                pattern: "audit_*".into(),
+                days: 90,
+            },
+            ServiceRetention {
+                pattern: "*".into(),
+                days: 7,
+            },
         ];
         assert_eq!(retention_days_for("audit_log", &rules, 30), 90);
         assert_eq!(retention_days_for("payment_api", &rules, 30), 7);
@@ -516,10 +561,16 @@ mod tests {
         use crate::config::ServiceRetention;
         // Pattern chars that sanitize to '_' still match correspondingly
         // sanitized dir names: "pay ment" service → "pay_ment--<hash>".
-        let rules = vec![ServiceRetention { pattern: "pay ment*".into(), days: 5 }];
+        let rules = vec![ServiceRetention {
+            pattern: "pay ment*".into(),
+            days: 5,
+        }];
         assert_eq!(retention_days_for("pay_ment--0f0f0f0f", &rules, 30), 5);
         // Dots are safe chars on both sides — they match literally.
-        let rules = vec![ServiceRetention { pattern: "pay.ment*".into(), days: 5 }];
+        let rules = vec![ServiceRetention {
+            pattern: "pay.ment*".into(),
+            days: 5,
+        }];
         assert_eq!(retention_days_for("pay.ment__0f0f0f0f", &rules, 30), 5);
     }
 
@@ -531,11 +582,16 @@ mod tests {
     fn compact_partitions_by_service_and_view_reads_back() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let conn = Connection::open_in_memory().expect("duckdb");
-        conn.execute_batch(crate::store::schema::LOGS_DDL).expect("ddl");
+        conn.execute_batch(crate::store::schema::LOGS_DDL)
+            .expect("ddl");
 
         let cutoff = chrono::Utc::now() - chrono::Duration::hours(1);
         let ts = cutoff - chrono::Duration::minutes(10);
-        for (svc, msg) in [("payment_service", "p1"), ("audit_log", "a1"), ("payment_service", "p2")] {
+        for (svc, msg) in [
+            ("payment_service", "p1"),
+            ("audit_log", "a1"),
+            ("payment_service", "p2"),
+        ] {
             conn.execute(
                 "INSERT INTO logs (ts, insert_ts, source_host, service, level, message, trace_id, span_id, attributes, geo_country, raw_len, protocol) \
                  VALUES (?, ?, 'h', ?, 'info', ?, NULL, NULL, NULL, NULL, 10, 'http')",
@@ -552,18 +608,33 @@ mod tests {
         .expect("insert null-service");
 
         let hot: Vec<HotAttribute> = vec![];
-        let stats = compact_once(&conn, tmp.path(), cutoff, 30, &hot, "zstd", &[])
-            .expect("compact");
+        let stats =
+            compact_once(&conn, tmp.path(), cutoff, 30, &hot, "zstd", &[]).expect("compact");
         assert_eq!(stats.exported_files, 3, "one file per service group");
         assert_eq!(stats.deleted_hot_rows, 4);
 
         // Layout check: date=/hour=/service= dirs exist.
         let root = std::fs::read_dir(tmp.path()).expect("read parquet root");
-        let date_dir = root.into_iter().next().expect("date dir").expect("entry").path();
-        let hour_dir = std::fs::read_dir(&date_dir).expect("hour").next().expect("hour dir").expect("entry").path();
+        let date_dir = root
+            .into_iter()
+            .next()
+            .expect("date dir")
+            .expect("entry")
+            .path();
+        let hour_dir = std::fs::read_dir(&date_dir)
+            .expect("hour")
+            .next()
+            .expect("hour dir")
+            .expect("entry")
+            .path();
         let svc_names: Vec<String> = std::fs::read_dir(&hour_dir)
             .expect("services")
-            .map(|e| e.expect("svc entry").file_name().to_string_lossy().to_string())
+            .map(|e| {
+                e.expect("svc entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect();
         assert_eq!(svc_names.len(), 3, "got: {svc_names:?}");
         assert!(svc_names.iter().any(|n| n == "service=payment_service"));
@@ -593,28 +664,50 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let now = chrono::Utc::now();
         // Two dates: 10 days old and 40 days old.
-        let old = (now - chrono::Duration::days(40)).format("%Y-%m-%d").to_string();
-        let mid = (now - chrono::Duration::days(10)).format("%Y-%m-%d").to_string();
+        let old = (now - chrono::Duration::days(40))
+            .format("%Y-%m-%d")
+            .to_string();
+        let mid = (now - chrono::Duration::days(10))
+            .format("%Y-%m-%d")
+            .to_string();
         for (date, svc) in [
             (&old, "audit_log"),
             (&old, "debug_chatty"),
             (&mid, "debug_chatty"),
         ] {
-            let dir = tmp.path().join(format!("date={date}/hour=00/service={svc}"));
+            let dir = tmp
+                .path()
+                .join(format!("date={date}/hour=00/service={svc}"));
             std::fs::create_dir_all(&dir).expect("mkdir");
             std::fs::write(dir.join("part-0.parquet"), b"x").expect("write");
         }
 
-        let rules = vec![ServiceRetention { pattern: "audit_*".into(), days: 90 }];
+        let rules = vec![ServiceRetention {
+            pattern: "audit_*".into(),
+            days: 90,
+        }];
         let mut stats = CompactStats::default();
         purge_old_parquet(tmp.path(), 30, &rules, &mut stats);
 
         // audit 40d old survives (90d rule); debug 40d purged (30d global);
         // debug 10d survives → exactly one purge.
         assert_eq!(stats.purged_files, 1);
-        assert!(tmp.path().join(format!("date={old}/hour=00/service=audit_log/part-0.parquet")).exists());
-        assert!(!tmp.path().join(format!("date={old}/hour=00/service=debug_chatty")).exists());
-        assert!(tmp.path().join(format!("date={mid}/hour=00/service=debug_chatty/part-0.parquet")).exists());
+        assert!(tmp
+            .path()
+            .join(format!(
+                "date={old}/hour=00/service=audit_log/part-0.parquet"
+            ))
+            .exists());
+        assert!(!tmp
+            .path()
+            .join(format!("date={old}/hour=00/service=debug_chatty"))
+            .exists());
+        assert!(tmp
+            .path()
+            .join(format!(
+                "date={mid}/hour=00/service=debug_chatty/part-0.parquet"
+            ))
+            .exists());
     }
 
     /// Legacy flat layout (parquet directly under date=/hour=) still purges
@@ -623,8 +716,12 @@ mod tests {
     fn purge_legacy_layout_uses_global_retention() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let now = chrono::Utc::now();
-        let old = (now - chrono::Duration::days(40)).format("%Y-%m-%d").to_string();
-        let recent = (now - chrono::Duration::days(5)).format("%Y-%m-%d").to_string();
+        let old = (now - chrono::Duration::days(40))
+            .format("%Y-%m-%d")
+            .to_string();
+        let recent = (now - chrono::Duration::days(5))
+            .format("%Y-%m-%d")
+            .to_string();
         for date in [&old, &recent] {
             let dir = tmp.path().join(format!("date={date}/hour=07"));
             std::fs::create_dir_all(&dir).expect("mkdir");
@@ -635,6 +732,9 @@ mod tests {
         purge_old_parquet(tmp.path(), 30, &[], &mut stats);
         assert_eq!(stats.purged_files, 1);
         assert!(!tmp.path().join(format!("date={old}")).exists());
-        assert!(tmp.path().join(format!("date={recent}/hour=07/part-0.parquet")).exists());
+        assert!(tmp
+            .path()
+            .join(format!("date={recent}/hour=07/part-0.parquet"))
+            .exists());
     }
 }

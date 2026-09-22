@@ -47,35 +47,50 @@ fn hot_columns_are_filterable_end_to_end() {
         // Missing user_id → column should be NULL, not 0.
         r#"{"service":"api","msg":"d","env":"prod"}"#,
     ];
-    let rows: Vec<_> = bodies.iter().map(|b| parser.parse(&make_record(b))).collect();
+    let rows: Vec<_> = bodies
+        .iter()
+        .map(|b| parser.parse(&make_record(b)))
+        .collect();
     let inserted = insert_batch(&conn, &hot, &rows).unwrap();
     assert_eq!(inserted, 4);
 
     // Filter by BIGINT hot column — exact-match filter goes straight to the column.
     let count_user_42: i64 = conn
-        .query_row("SELECT COUNT(*) FROM logs WHERE user_id = 42", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM logs WHERE user_id = 42", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(count_user_42, 2);
 
     // Filter by VARCHAR hot column.
     let count_staging: i64 = conn
-        .query_row("SELECT COUNT(*) FROM logs WHERE env = 'staging'", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM logs WHERE env = 'staging'", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(count_staging, 1);
 
     // Filter by BOOLEAN hot column.
     let count_canary: i64 = conn
-        .query_row("SELECT COUNT(*) FROM logs WHERE is_canary = true", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM logs WHERE is_canary = true",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(count_canary, 1);
 
     // NULL handling: missing user_id should not match `user_id = 0`.
     let count_zero: i64 = conn
-        .query_row("SELECT COUNT(*) FROM logs WHERE user_id = 0", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM logs WHERE user_id = 0", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(count_zero, 0);
     let count_null: i64 = conn
-        .query_row("SELECT COUNT(*) FROM logs WHERE user_id IS NULL", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM logs WHERE user_id IS NULL", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(count_null, 1);
 
@@ -136,7 +151,9 @@ fn hot_columns_survive_restart_and_alter() {
         .unwrap();
     assert_eq!(total, 1);
     let null_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM logs WHERE user_id IS NULL", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM logs WHERE user_id IS NULL", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(null_count, 1);
 
@@ -147,7 +164,9 @@ fn hot_columns_survive_restart_and_alter() {
     ))];
     insert_batch(&conn, &hot, &rows).unwrap();
     let count_100: i64 = conn
-        .query_row("SELECT COUNT(*) FROM logs WHERE user_id = 100", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM logs WHERE user_id = 100", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(count_100, 1);
 }
@@ -167,14 +186,14 @@ fn filter_on_hot_column_uses_column_not_json() {
     apply_schema(&conn, &parquet_dir, &hot).unwrap();
 
     let parser = Parser::new(hot.clone());
-    let rows = vec![parser.parse(&make_record(
-        r#"{"msg":"x","user_id":123}"#,
-    ))];
+    let rows = vec![parser.parse(&make_record(r#"{"msg":"x","user_id":123}"#))];
     insert_batch(&conn, &hot, &rows).unwrap();
 
     // user_id is popped out of residue; verify the column-only filter still works.
     let via_col: i64 = conn
-        .query_row("SELECT user_id FROM logs WHERE user_id = 123", [], |r| r.get(0))
+        .query_row("SELECT user_id FROM logs WHERE user_id = 123", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(via_col, 123);
 

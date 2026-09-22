@@ -97,15 +97,15 @@ fn append_dir(
         }
         n
     }
-    Ok(if path.is_dir() { dir_size(&path) } else { path.metadata().map(|m| m.len()).unwrap_or(0) })
+    Ok(if path.is_dir() {
+        dir_size(&path)
+    } else {
+        path.metadata().map(|m| m.len()).unwrap_or(0)
+    })
 }
 
 /// Insert a `backup_runs` row; returns its id.
-fn record_run(
-    store: &Store,
-    trigger: &str,
-    started_at: chrono::DateTime<Utc>,
-) -> Result<i64> {
+fn record_run(store: &Store, trigger: &str, started_at: chrono::DateTime<Utc>) -> Result<i64> {
     let conn = store.lock();
     let id: i64 = conn.query_row("SELECT nextval('backup_runs_id_seq')", [], |r| r.get(0))?;
     conn.execute(
@@ -175,8 +175,10 @@ pub async fn run_snapshot(
     let started_at = Utc::now();
     let id = record_run(&store, trigger, started_at)?;
 
-    match run_snapshot_inner(&store, data_dir, cfg, http_port, trigger, remote, id, started_at)
-        .await
+    match run_snapshot_inner(
+        &store, data_dir, cfg, http_port, trigger, remote, id, started_at,
+    )
+    .await
     {
         Ok(summary) => {
             finish_run(
@@ -192,7 +194,16 @@ pub async fn run_snapshot(
             Ok(summary)
         }
         Err(e) => {
-            finish_run(&store, id, "error", None, None, 0, None, Some(&e.to_string()));
+            finish_run(
+                &store,
+                id,
+                "error",
+                None,
+                None,
+                0,
+                None,
+                Some(&e.to_string()),
+            );
             Err(e)
         }
     }
@@ -393,11 +404,7 @@ pub struct RestoreSummary {
 /// (must exist as a dir or be creatable; must NOT be the active data dir —
 /// the caller enforces that). Verifies the archive's sha256 against the
 /// sibling manifest, extracts, then sanity-opens the DuckDB file.
-pub async fn restore_snapshot(
-    from: &str,
-    into: &Path,
-    remote: Remote,
-) -> Result<RestoreSummary> {
+pub async fn restore_snapshot(from: &str, into: &Path, remote: Remote) -> Result<RestoreSummary> {
     #[cfg(not(feature = "object-storage"))]
     if from.starts_with("s3://") {
         return Err(crate::Error::config(
@@ -405,10 +412,13 @@ pub async fn restore_snapshot(
         ));
     }
     #[allow(unused_variables)]
-    let (tar_bytes, manifest): (Vec<u8>, SnapshotManifest) = if let Some(path) = from.strip_prefix("s3://") {
+    let (tar_bytes, manifest): (Vec<u8>, SnapshotManifest) = if let Some(path) =
+        from.strip_prefix("s3://")
+    {
         #[cfg(feature = "object-storage")]
-        let cold = remote
-            .ok_or_else(|| crate::Error::config("s3:// restore requires backup.backend/bucket to be configured"))?;
+        let cold = remote.ok_or_else(|| {
+            crate::Error::config("s3:// restore requires backup.backend/bucket to be configured")
+        })?;
         #[cfg(not(feature = "object-storage"))]
         let cold: () = unreachable!("guarded above");
         // Accept either a full s3://bucket/key or just the key under the
@@ -499,7 +509,8 @@ fn unpack_in_dir<R: std::io::Read>(tar: &mut tar::Archive<R>, into: &Path) -> Re
         .entries()
         .map_err(|e| crate::Error::invalid_input(format!("tar read: {e}")))?
     {
-        let mut entry = entry.map_err(|e| crate::Error::invalid_input(format!("tar entry: {e}")))?;
+        let mut entry =
+            entry.map_err(|e| crate::Error::invalid_input(format!("tar entry: {e}")))?;
         // Entry::unpack_in refuses paths that escape `into` (traversal).
         entry
             .unpack_in(into)
@@ -518,12 +529,7 @@ mod tests {
     use crate::config::RetentionConfig;
 
     fn test_store(tmp: &Path) -> Store {
-        let store = Store::open(
-            &tmp.join("central.duckdb"),
-            tmp.join("parquet"),
-            vec![],
-        )
-        .unwrap();
+        let store = Store::open(&tmp.join("central.duckdb"), tmp.join("parquet"), vec![]).unwrap();
         store
             .lock()
             .execute(
@@ -561,16 +567,9 @@ mod tests {
         let store = test_store(&data_dir);
         let cfg = backup_cfg(tmp.path());
 
-        let summary = run_snapshot(
-            store.clone(),
-            &data_dir,
-            &cfg,
-            8084,
-            "manual",
-            None,
-        )
-        .await
-        .unwrap();
+        let summary = run_snapshot(store.clone(), &data_dir, &cfg, 8084, "manual", None)
+            .await
+            .unwrap();
         assert!(summary.bytes > 0);
         assert!(Path::new(summary.local_path.as_ref().unwrap()).exists());
 

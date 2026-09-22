@@ -23,13 +23,19 @@ pub fn router(state: ApiState) -> Router {
             "/api/error-groups/{fingerprint}",
             get(get_error_group).delete(delete_error_group),
         )
-        .route("/api/error-groups/{fingerprint}/resolve", post(resolve_group))
+        .route(
+            "/api/error-groups/{fingerprint}/resolve",
+            post(resolve_group),
+        )
         .route(
             "/api/error-groups/{fingerprint}/unresolve",
             post(unresolve_group),
         )
         .route("/api/error-groups/{fingerprint}/ignore", post(ignore_group))
-        .route("/api/error-groups/{fingerprint}/explain", post(explain_group))
+        .route(
+            "/api/error-groups/{fingerprint}/explain",
+            post(explain_group),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }
@@ -71,10 +77,7 @@ fn window_secs(s: &str) -> i64 {
     super::api::parse_window_secs(s).unwrap_or(24 * 3600)
 }
 
-async fn list_error_groups(
-    State(st): State<ApiState>,
-    Query(q): Query<ListQuery>,
-) -> Response {
+async fn list_error_groups(State(st): State<ApiState>, Query(q): Query<ListQuery>) -> Response {
     let conn = st.store.lock();
     let params = ListParams {
         window_secs: window_secs(&q.window),
@@ -86,7 +89,9 @@ async fn list_error_groups(
         offset: q.offset.max(0),
     };
     match errors::list_groups(&conn, &params) {
-        Ok((groups, total)) => Json(serde_json::json!({ "groups": groups, "total": total })).into_response(),
+        Ok((groups, total)) => {
+            Json(serde_json::json!({ "groups": groups, "total": total })).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -95,10 +100,7 @@ async fn list_error_groups(
     }
 }
 
-async fn get_error_group(
-    State(st): State<ApiState>,
-    Path(fingerprint): Path<String>,
-) -> Response {
+async fn get_error_group(State(st): State<ApiState>, Path(fingerprint): Path<String>) -> Response {
     let conn = st.store.lock();
     // Sparkline covers the last 24h of per-minute counts.
     match errors::get_group(&conn, &fingerprint, 24 * 3600) {
@@ -119,14 +121,18 @@ async fn get_error_group(
 /// Deleting a group row is a maintenance action (its events remain). Admin
 /// scope is enforced here in addition to the middleware's write check —
 /// deleting history has more blast radius than resolving.
-async fn delete_error_group(State(st): State<ApiState>, Path(fingerprint): Path<String>) -> Response {
+async fn delete_error_group(
+    State(st): State<ApiState>,
+    Path(fingerprint): Path<String>,
+) -> Response {
     let conn = st.store.lock();
     match conn.execute(
         "DELETE FROM error_groups WHERE fingerprint = ?",
         duckdb::params![fingerprint],
     ) {
-        Ok(n) if n > 0 => Json(serde_json::json!({ "fingerprint": fingerprint, "deleted": true }))
-            .into_response(),
+        Ok(n) if n > 0 => {
+            Json(serde_json::json!({ "fingerprint": fingerprint, "deleted": true })).into_response()
+        }
         Ok(_) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such error group" })),
@@ -140,17 +146,11 @@ async fn delete_error_group(State(st): State<ApiState>, Path(fingerprint): Path<
     }
 }
 
-async fn set_group_status(
-    st: &ApiState,
-    fingerprint: &str,
-    status: &str,
-) -> Response {
+async fn set_group_status(st: &ApiState, fingerprint: &str, status: &str) -> Response {
     let conn = st.store.lock();
     match errors::set_status(&conn, fingerprint, status) {
-        Ok(true) => Json(
-            serde_json::json!({ "fingerprint": fingerprint, "status": status }),
-        )
-        .into_response(),
+        Ok(true) => Json(serde_json::json!({ "fingerprint": fingerprint, "status": status }))
+            .into_response(),
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such error group" })),

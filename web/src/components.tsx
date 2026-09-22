@@ -382,7 +382,50 @@ export function toPoints<T>(
 // Time + filter controls, shared by the preset dashboards and panels
 // =====================================================================
 
-export const TIME_WINDOWS = ["5m", "15m", "1h", "6h", "24h", "7d"];
+export const TIME_WINDOWS = ["5m", "15m", "1h", "6h", "24h", "7d", "30d", "90d"];
+
+/** Build a deep-link to the Logs Explorer (the `/` route) carrying the
+ * current time range + filter. `window` is a relative shorthand, or omit it
+ * and pass from/to (ISO) for an explicit range — the explorer understands
+ * both via its URL params. */
+export function logsExplorerHref(params: {
+  window?: string;
+  from?: string;
+  to?: string;
+  filter?: string;
+}): string {
+  const sp = new URLSearchParams();
+  if (params.filter?.trim()) sp.set("filter", params.filter.trim());
+  if (params.window) sp.set("window", params.window);
+  if (params.from) sp.set("from", params.from);
+  if (params.to) sp.set("to", params.to);
+  const q = sp.toString();
+  return q ? `/?${q}` : "/";
+}
+
+/** "open in Logs Explorer →" link styled like Panel.tsx's meta links. */
+export function LogsExplorerLink({
+  window,
+  from,
+  to,
+  filter,
+  label = "open in logs →",
+}: {
+  window?: string;
+  from?: string;
+  to?: string;
+  filter?: string;
+  label?: string;
+}) {
+  return (
+    <a
+      href={logsExplorerHref({ window, from, to, filter })}
+      className="text-xs text-tremor-brand dark:text-dark-tremor-brand hover:underline whitespace-nowrap"
+    >
+      {label}
+    </a>
+  );
+}
 
 /** Selector state for a dashboard time range + filter. `window: "custom"`
  * switches to the explicit from/to datetime inputs. */
@@ -442,15 +485,19 @@ const inputCls =
   "px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm";
 
 /** Shared toolbar: relative window / custom from-to range + optional filter
- * DSL input. Rendered above every preset dashboard. */
+ * DSL input. Rendered above every preset dashboard. `defaultOption` adds a
+ * value-"" choice (e.g. "panel defaults" on the dashboard viewer) meaning
+ * "no override". */
 export function TimeFilterBar({
   value,
   onChange,
   showFilter = true,
+  defaultOption,
 }: {
   value: TimeFilterState;
   onChange: (s: TimeFilterState) => void;
   showFilter?: boolean;
+  defaultOption?: string;
 }) {
   const custom = value.window === "custom";
   return (
@@ -461,6 +508,7 @@ export function TimeFilterBar({
         className={inputCls}
         aria-label="time range"
       >
+        {defaultOption !== undefined && <option value="">{defaultOption}</option>}
         {TIME_WINDOWS.map((w) => (
           <option key={w} value={w}>
             last {w}
@@ -500,6 +548,8 @@ export function TimeFilterBar({
           aria-label="filter"
         />
       )}
+      {/* Jump from the dashboard to the raw logs with the same range+filter. */}
+      <LogsExplorerLink {...timeFilterParams(value)} />
     </div>
   );
 }

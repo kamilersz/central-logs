@@ -1,0 +1,33 @@
+# Read the Docs configuration — https://docs.readthedocs.io/en/stable/config-file/v2.html
+#
+# Source layout:
+#   mkdocs / sphinx sources live under docs/. Read the Docs needs a `mkdocs`
+#   config or a `sphinx` config; we use mkdocs.yml (mkdocs-material is RTD's
+#   recommended theme family for plain-Markdown sites). When you only need
+#   plain Markdown without an external builder, set `sphinx.configuration`
+#   to a Sphinx project's conf.py instead.
+#
+# Versioned docs:
+#   We don't pin a specific release line — central-logs is shipped as a
+#   single moving-target binary. RTD will build `latest` from `main`. Add
+#   a `versions:` block here when a stable release branch is cut.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+  # Don't fail the build on broken in-page anchors — Markdown → HTML
+  # conversion is imperfect and we don't want a single renamed heading
+  # to break the whole site.
+  fail_on_warning: false
+
+mkdocs:
+  configuration: mkdocs.yml
+  # `fail_on_warning` is also respected at the mkdocs level; we keep the
+  # build permissive (above) so link rot in third-party docs doesn't
+  # block deploys.
+
+formats:
+  # llms.txt is served at /llms.txt for LLM agents (see docs/llms.md).
+  - htmlzip

@@ -450,6 +450,30 @@ export const api = {
   pipeline: () => getJson<PipelineStatus>("/api/pipeline"),
   logs: (params: LogsParams) =>
     getJson<LogsResponse>(`/api/logs${buildQuery(params as Record<string, string | number | undefined>)}`),
+  /** Download the current view as .xlsx (JSON attributes expanded into
+   * columns). Reads the body as a blob and triggers a file download. */
+  logsExport: async (params: LogsParams): Promise<void> => {
+    const resp = await fetch(
+      `/api/logs/export${buildQuery(params as Record<string, string | number | undefined>)}`,
+      { credentials: "same-origin" },
+    );
+    redirectToLoginIfUnauthorized(resp.status);
+    if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}: ${await resp.text()}`);
+    const disposition = resp.headers.get("Content-Disposition") ?? "";
+    const m = disposition.match(/filename="([^"]+)"/);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = m?.[1] ?? "logs.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
   volume: (params: DashboardParams) =>
     getJson<VolumeRow[]>(`/api/dashboard/volume${buildQuery(params as Record<string, string | number | undefined>)}`),
   errorRate: (params: DashboardParams) =>

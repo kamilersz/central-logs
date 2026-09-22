@@ -1,0 +1,22 @@
+# HELP central_logs_records_total Total records received.
+# TYPE central_logs_records_total counter
+central_logs_records_total 494615
+central_logs_bytes_total 114239990
+central_logs_errors_total 64
+# HELP central_logs_audit_dropped_total Self-audit events dropped (WAL channel saturated).
+# TYPE central_logs_audit_dropped_total counter
+central_logs_audit_dropped_total 0
+# HELP central_logs_wal_channel_depth Entries waiting in the bounded insert->WAL channel.
+# TYPE central_logs_wal_channel_depth gauge
+central_logs_wal_channel_depth 0
+# HELP central_logs_wal_channel_capacity Configured bound of the insert->WAL channel.
+# TYPE central_logs_wal_channel_capacity gauge
+central_logs_wal_channel_capacity 65536
+# HELP central_logs_wal_bytes_written_total WAL bytes durably written.
+# TYPE central_logs_wal_bytes_written_total counter
+central_logs_wal_bytes_written_total 125616135
+# HELP central_logs_ingest_lag_bytes WAL bytes not yet consumed by ingest workers.
+# TYPE central_logs_ingest_lag_bytes gauge
+central_logs_ingest_lag_bytes 12679196
+central_logs_protocol_records{protocol="http_json"} 494615
+central_logs_protocol_bytes{protocol="http_json"} 114239990

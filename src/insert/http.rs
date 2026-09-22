@@ -102,33 +102,49 @@ fn otlp_response(wire: Wire, status: StatusCode) -> Response {
 }
 
 /// Push records into the WAL with the configured backpressure timeout.
+/// Batch ack: one group-commit wait per request — the FIFO WAL makes the
+/// last record's fsync cover every prior record (see `append_batch_acked`).
 async fn append_all(st: &InsertState, records: Vec<RawRecord>) -> AppendOutcome {
     let mut out = AppendOutcome {
         accepted: 0,
         rejected: 0,
         errors: Vec::new(),
     };
-    for rec in records {
-        let proto = rec.protocol;
+    let total = records.len();
+    let protos: Vec<Protocol> = records.iter().map(|r| r.protocol).collect();
+    for rec in &records {
         let bytes = rec.raw_len();
-        st.counters.record(proto, bytes);
-        match tokio::time::timeout(st.backpressure_timeout, st.handle.append_acked(rec)).await {
-            Ok(Ok(())) => out.accepted += 1,
-            Ok(Err(crate::Error::ChannelClosed)) => {
-                out.rejected += 1;
-                out.errors.push("wal channel closed".into());
-                st.counters.record_error(proto);
-                break;
+        st.counters.record(rec.protocol, bytes);
+    }
+    if total == 0 {
+        return out;
+    }
+    match tokio::time::timeout(
+        st.backpressure_timeout,
+        st.handle.append_batch_acked(records),
+    )
+    .await
+    {
+        Ok(Ok(accepted)) => out.accepted = accepted,
+        Ok(Err(crate::Error::ChannelClosed)) => {
+            out.rejected = total;
+            out.errors.push("wal channel closed".into());
+            for p in &protos {
+                st.counters.record_error(*p);
             }
-            Ok(Err(e)) => {
-                out.rejected += 1;
-                out.errors.push(format!("{e}"));
-                st.counters.record_error(proto);
+        }
+        Ok(Err(e)) => {
+            out.rejected = total;
+            out.errors.push(format!("{e}"));
+            for p in &protos {
+                st.counters.record_error(*p);
             }
-            Err(_) => {
-                out.rejected += 1;
-                out.errors.push("backpressure timeout".into());
-                st.counters.record_error(proto);
+        }
+        Err(_) => {
+            out.rejected = total;
+            out.errors.push("backpressure timeout".into());
+            for p in &protos {
+                st.counters.record_error(*p);
             }
         }
     }
@@ -163,9 +179,7 @@ async fn handle_post_logs(
     // OTLP detection: explicit protobuf content type, or OTLP/JSON shape.
     let otlp_wire = if is_otlp_protobuf(&ct) {
         Some(Wire::Protobuf)
-    } else if ct.to_ascii_lowercase().contains("json")
-        && otlp::json_body_looks_like_otlp(&body)
-    {
+    } else if ct.to_ascii_lowercase().contains("json") && otlp::json_body_looks_like_otlp(&body) {
         Some(Wire::Json)
     } else {
         None
@@ -203,7 +217,11 @@ async fn handle_otlp_logs(st: &InsertState, wire: Wire, body: &[u8]) -> Response
             return otlp_response(wire, StatusCode::BAD_REQUEST);
         }
     };
-    let records = otlp::logs_to_records(req, chrono::Utc::now(), &st.peer_header.clone().unwrap_or_default());
+    let records = otlp::logs_to_records(
+        req,
+        chrono::Utc::now(),
+        &st.peer_header.clone().unwrap_or_default(),
+    );
     finish_otlp(st, wire, records).await
 }
 
@@ -227,7 +245,11 @@ async fn handle_post_traces(
             return otlp_response(wire, StatusCode::BAD_REQUEST);
         }
     };
-    let records = otlp::traces_to_records(req, chrono::Utc::now(), &st.peer_header.clone().unwrap_or_default());
+    let records = otlp::traces_to_records(
+        req,
+        chrono::Utc::now(),
+        &st.peer_header.clone().unwrap_or_default(),
+    );
     finish_otlp(&st, wire, records).await
 }
 
@@ -251,7 +273,11 @@ async fn handle_post_metrics(
             return otlp_response(wire, StatusCode::BAD_REQUEST);
         }
     };
-    let records = otlp::metrics_to_records(req, chrono::Utc::now(), &st.peer_header.clone().unwrap_or_default());
+    let records = otlp::metrics_to_records(
+        req,
+        chrono::Utc::now(),
+        &st.peer_header.clone().unwrap_or_default(),
+    );
     finish_otlp(&st, wire, records).await
 }
 

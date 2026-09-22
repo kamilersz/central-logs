@@ -38,14 +38,14 @@ impl SegmentRotator {
         let mut max_id = 0u64;
         for entry in std::fs::read_dir(&base_dir)? {
             let entry = entry?;
-            if let Some(id) = segment_id_from_name(
-                entry.file_name().to_str().unwrap_or(""),
-            ) {
+            if let Some(id) = segment_id_from_name(entry.file_name().to_str().unwrap_or("")) {
                 max_id = max_id.max(id);
             }
         }
         let current_path = base_dir.join(segment_filename(max_id));
-        let current_bytes = std::fs::metadata(&current_path).map(|m| m.len()).unwrap_or(0);
+        let current_bytes = std::fs::metadata(&current_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         Ok(Self {
             base_dir,
             max_bytes,

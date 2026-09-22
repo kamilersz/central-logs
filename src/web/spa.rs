@@ -56,9 +56,8 @@ fn serve_file(path: &str) -> Response {
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::CONTENT_TYPE,
-                HeaderValue::from_str(&mime).unwrap_or(HeaderValue::from_static(
-                    "application/octet-stream",
-                )),
+                HeaderValue::from_str(&mime)
+                    .unwrap_or(HeaderValue::from_static("application/octet-stream")),
             );
             // Hashed asset filenames from Vite are safe to cache aggressively.
             // index.html shouldn't be cached (it references the latest hashes).
@@ -68,12 +67,7 @@ fn serve_file(path: &str) -> Response {
                     HeaderValue::from_static("public, max-age=31536000, immutable"),
                 );
             }
-            (
-                StatusCode::OK,
-                headers,
-                Body::from(asset.data.into_owned()),
-            )
-                .into_response()
+            (StatusCode::OK, headers, Body::from(asset.data.into_owned())).into_response()
         }
         None => {
             // Fallback for SPA client-side routes (any non-asset path). For
@@ -113,6 +107,9 @@ mod tests {
     fn embedded_assets_dir_has_files() {
         let names: Vec<String> = SpaAssets::iter().map(|p| p.to_string()).collect();
         let has_assets = names.iter().any(|n| n.starts_with("assets/"));
-        assert!(has_assets, "no files under assets/ found in embed; names: {names:?}");
+        assert!(
+            has_assets,
+            "no files under assets/ found in embed; names: {names:?}"
+        );
     }
 }

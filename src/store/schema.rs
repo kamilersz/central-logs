@@ -250,10 +250,7 @@ pub fn apply_schema(conn: &Connection, parquet_dir: &Path, hot: &[HotAttribute])
             attr.duckdb_type.ddl()
         );
         conn.execute_batch(&sql)
-            .map_err(|e| crate::Error::config(format!(
-                "adding hot column '{}': {e}",
-                attr.name
-            )))?;
+            .map_err(|e| crate::Error::config(format!("adding hot column '{}': {e}", attr.name)))?;
     }
 
     let dir_str = parquet_dir.to_string_lossy().replace('\'', "''");
@@ -283,7 +280,10 @@ pub fn apply_schema(conn: &Connection, parquet_dir: &Path, hot: &[HotAttribute])
     );
     // Fallback: if the parquet glob fails (no files yet), create a view over hot only.
     if let Err(e) = conn.execute_batch(&view_sql) {
-        tracing::warn!(?e, "creating logs_all with parquet glob failed; falling back to hot-only view");
+        tracing::warn!(
+            ?e,
+            "creating logs_all with parquet glob failed; falling back to hot-only view"
+        );
         let fallback = "CREATE OR REPLACE VIEW logs_all AS SELECT * FROM logs;";
         conn.execute_batch(fallback)?;
     }
@@ -310,7 +310,11 @@ pub const LOGS_BUILTIN_COLUMNS: &[&str] = &[
 ];
 
 /// Re-create the `logs_all` view after compaction has changed the parquet dir.
-pub fn refresh_logs_all_view(conn: &Connection, parquet_dir: &Path, hot: &[HotAttribute]) -> Result<()> {
+pub fn refresh_logs_all_view(
+    conn: &Connection,
+    parquet_dir: &Path,
+    hot: &[HotAttribute],
+) -> Result<()> {
     apply_schema(conn, parquet_dir, hot)
 }
 
@@ -324,8 +328,10 @@ pub fn store_state(conn: &Connection) -> crate::store::StoreState {
         }
     }
     fn ts(conn: &Connection, sql: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-        conn.query_row(sql, [], |row| row.get::<_, chrono::DateTime<chrono::Utc>>(0))
-            .ok()
+        conn.query_row(sql, [], |row| {
+            row.get::<_, chrono::DateTime<chrono::Utc>>(0)
+        })
+        .ok()
     }
     state.hot_rows = count(conn, "SELECT COUNT(*) FROM logs");
     state.rollup_1m_rows = count(conn, "SELECT COUNT(*) FROM rollup_1m");

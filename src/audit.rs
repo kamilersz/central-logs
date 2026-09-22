@@ -204,10 +204,7 @@ fn serialize_event(
     envelope.insert("service".into(), json!(AUDIT_SERVICE));
     envelope.insert("level".into(), json!(level));
     envelope.insert("msg".into(), json!(action));
-    envelope.insert(
-        "host".into(),
-        json!(source_ip.unwrap_or("internal")),
-    );
+    envelope.insert("host".into(), json!(source_ip.unwrap_or("internal")));
     // Audit-specific fields — the parser will collect these into
     // `row.attributes` automatically.
     envelope.insert("action".into(), json!(action));
@@ -271,7 +268,10 @@ fn action_category(action: &str) -> &'static str {
 ///
 /// Empty / malformed values are skipped, not returned. If nothing resolves,
 /// returns an empty string.
-pub fn resolve_peer(headers: &axum::http::HeaderMap, fallback: Option<std::net::SocketAddr>) -> String {
+pub fn resolve_peer(
+    headers: &axum::http::HeaderMap,
+    fallback: Option<std::net::SocketAddr>,
+) -> String {
     // 1. CF-Connecting-IP (Cloudflare).
     if let Some(ip) = first_header(headers, "cf-connecting-ip") {
         return ip;
@@ -289,9 +289,7 @@ pub fn resolve_peer(headers: &axum::http::HeaderMap, fallback: Option<std::net::
         return ip;
     }
     // 5. Socket fallback.
-    fallback
-        .map(|sa| sa.ip().to_string())
-        .unwrap_or_default()
+    fallback.map(|sa| sa.ip().to_string()).unwrap_or_default()
 }
 
 /// Look up a single-value header by name (case-insensitive) and return its
@@ -480,15 +478,24 @@ mod tests {
             Some("cookie"),
             None,
             "success",
-            &[("new_key_id", json!(42)), ("new_key_prefix", json!("abc12345"))],
+            &[
+                ("new_key_id", json!(42)),
+                ("new_key_prefix", json!("abc12345")),
+            ],
         );
         let s = std::str::from_utf8(&raw).unwrap();
         // The raw key prefix in this test ("abc12345") is intentionally
         // present (it's a non-secret display prefix), but raw key MATERIAL
         // would never be added by the builder.
         assert!(!s.contains("clk_"), "raw key material must not appear");
-        assert!(!s.contains("Bearer "), "Authorization header must not appear");
-        assert!(!s.contains("cl_session="), "session cookie value must not appear");
+        assert!(
+            !s.contains("Bearer "),
+            "Authorization header must not appear"
+        );
+        assert!(
+            !s.contains("cl_session="),
+            "session cookie value must not appear"
+        );
     }
 
     #[test]
@@ -509,10 +516,7 @@ mod tests {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("cf-connecting-ip", "203.0.113.5".parse().unwrap());
         headers.insert("x-real-ip", "10.0.0.99".parse().unwrap());
-        headers.insert(
-            "x-forwarded-for",
-            "203.0.113.5, 10.0.0.99".parse().unwrap(),
-        );
+        headers.insert("x-forwarded-for", "203.0.113.5, 10.0.0.99".parse().unwrap());
         assert_eq!(resolve_peer(&headers, None), "203.0.113.5");
     }
 
@@ -538,17 +542,11 @@ mod tests {
     #[test]
     fn peer_resolution_forwarded_strips_port_and_brackets() {
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            "forwarded",
-            "for=192.0.2.60:47028".parse().unwrap(),
-        );
+        headers.insert("forwarded", "for=192.0.2.60:47028".parse().unwrap());
         assert_eq!(resolve_peer(&headers, None), "192.0.2.60");
 
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            "forwarded",
-            "for=\"[2001:db8::1]:3960\"".parse().unwrap(),
-        );
+        headers.insert("forwarded", "for=\"[2001:db8::1]:3960\"".parse().unwrap());
         assert_eq!(resolve_peer(&headers, None), "2001:db8::1");
     }
 
@@ -576,10 +574,7 @@ mod tests {
     #[test]
     fn peer_resolution_xff_skips_empty_entries() {
         let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            "  , 203.0.113.5 ".parse().unwrap(),
-        );
+        headers.insert("x-forwarded-for", "  , 203.0.113.5 ".parse().unwrap());
         assert_eq!(resolve_peer(&headers, None), "203.0.113.5");
     }
 

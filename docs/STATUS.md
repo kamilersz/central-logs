@@ -16,7 +16,7 @@ What's done and tested:
   approve/reject, API Keys (admin). Dark-mode "mission control" design system
   (navy canvas, electric-blue brand, mono machine data, semantic level
   badges, dashed-grid line charts with HTML legends) — see
-  [`web/tailwind.config.js`](../web/tailwind.config.js) + [`web/src/index.css`](../web/src/index.css).
+  [`web/tailwind.config.js`](https://github.com/kamilersz/central-logs/blob/main/web/tailwind.config.js) + [`web/src/index.css`](https://github.com/kamilersz/central-logs/blob/main/web/src/index.css).
 - AI auto-filter via OpenAI, Anthropic, or 9inference (nemotron-3-ultra)
 - message-JSON lifting, drop-attributes, zstd cold Parquet, per-service
   retention, sharded ingest workers, pipeline health gauges, per-service

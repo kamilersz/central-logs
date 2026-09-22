@@ -91,14 +91,23 @@ async fn insert_over_http_flows_through_ingest_to_a_filtered_query() {
         .await
         .expect("http request");
     assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let parsed: InsertResponseOut = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(parsed.accepted, 3, "all three records should be acked: {parsed:?}");
+    assert_eq!(
+        parsed.accepted, 3,
+        "all three records should be acked: {parsed:?}"
+    );
     assert_eq!(parsed.rejected, 0);
 
     // --- Ingest: parse/enrich/batch-insert into DuckDB, same as main.rs.
-    let store = Store::open(&tmp.path().join("cl.duckdb"), tmp.path().join("parquet"), Vec::new())
-        .expect("store");
+    let store = Store::open(
+        &tmp.path().join("cl.duckdb"),
+        tmp.path().join("parquet"),
+        Vec::new(),
+    )
+    .expect("store");
     let enricher = Arc::new(Enricher::new("unknown", "localhost"));
     let parser = Arc::new(LogParser::empty());
     let ingest_handles = spawn_ingest_workers(
@@ -118,12 +127,16 @@ async fn insert_over_http_flows_through_ingest_to_a_filtered_query() {
     loop {
         let count: i64 = {
             let conn = store.lock();
-            conn.query_row("SELECT COUNT(*) FROM logs", [], |r| r.get(0)).unwrap_or(0)
+            conn.query_row("SELECT COUNT(*) FROM logs", [], |r| r.get(0))
+                .unwrap_or(0)
         };
         if count >= 3 {
             break;
         }
-        assert!(Instant::now() < deadline, "timeout waiting for ingest: {count}/3 rows");
+        assert!(
+            Instant::now() < deadline,
+            "timeout waiting for ingest: {count}/3 rows"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     for h in ingest_handles {
@@ -135,9 +148,14 @@ async fn insert_over_http_flows_through_ingest_to_a_filtered_query() {
         let conn = store.lock();
         let mut state = RollupState::default();
         let n = rollup_once(&conn, &mut state, &RollupConfig::default()).expect("rollup");
-        assert!(n >= 3, "rollup should have aggregated at least 3 rows, got {n}");
+        assert!(
+            n >= 3,
+            "rollup should have aggregated at least 3 rows, got {n}"
+        );
         let volume: i64 = conn
-            .query_row("SELECT COALESCE(SUM(n), 0) FROM rollup_1m", [], |r| r.get(0))
+            .query_row("SELECT COALESCE(SUM(n), 0) FROM rollup_1m", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(volume, 3);
     }
@@ -151,7 +169,8 @@ async fn insert_over_http_flows_through_ingest_to_a_filtered_query() {
 
     let conn = store.lock();
     let sql = format!("SELECT message FROM logs_all WHERE {where_sql}");
-    let param_refs: Vec<&dyn duckdb::ToSql> = params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
+    let param_refs: Vec<&dyn duckdb::ToSql> =
+        params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
     let mut stmt = conn.prepare(&sql).unwrap();
     let rows: Vec<String> = stmt
         .query_map(param_refs.as_slice(), |r| r.get(0))
@@ -164,7 +183,10 @@ async fn insert_over_http_flows_through_ingest_to_a_filtered_query() {
     let all_orders = parse_filter("service:orders").expect("parse filter");
     let (where_sql, params) = all_orders.to_sql(&whitelist).unwrap();
     let sql = format!("SELECT COUNT(*) FROM logs_all WHERE {where_sql}");
-    let param_refs: Vec<&dyn duckdb::ToSql> = params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
-    let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |r| r.get(0)).unwrap();
+    let param_refs: Vec<&dyn duckdb::ToSql> =
+        params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
+    let count: i64 = conn
+        .query_row(&sql, param_refs.as_slice(), |r| r.get(0))
+        .unwrap();
     assert_eq!(count, 2);
 }

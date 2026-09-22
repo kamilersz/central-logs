@@ -151,9 +151,15 @@ pub async fn translate(
             model,
             base_url,
         } => {
-            let resp =
-                call_openai(api_key, model, base_url.as_deref(), SYSTEM_PROMPT, &user_msg, 200)
-                    .await?;
+            let resp = call_openai(
+                api_key,
+                model,
+                base_url.as_deref(),
+                SYSTEM_PROMPT,
+                &user_msg,
+                200,
+            )
+            .await?;
             (parse_model_output(&resp), "openai".to_string(), resp)
         }
         LlmConfig::Anthropic {
@@ -161,18 +167,20 @@ pub async fn translate(
             model,
             base_url,
         } => {
-            let resp =
-                call_anthropic(api_key, model, base_url.as_deref(), SYSTEM_PROMPT, &user_msg, 200)
-                    .await?;
+            let resp = call_anthropic(
+                api_key,
+                model,
+                base_url.as_deref(),
+                SYSTEM_PROMPT,
+                &user_msg,
+                200,
+            )
+            .await?;
             (parse_model_output(&resp), "anthropic".to_string(), resp)
         }
         LlmConfig::NineInference { api_key, model } => {
             let resp = call_9inference(api_key, model, SYSTEM_PROMPT, &user_msg, 200).await?;
-            (
-                parse_model_output(&resp),
-                "9inference".to_string(),
-                resp,
-            )
+            (parse_model_output(&resp), "9inference".to_string(), resp)
         }
     };
 
@@ -376,9 +384,7 @@ pub async fn build_dashboard(
             .map(|r| !r.trim().is_empty())
             .unwrap_or(false);
     if description.is_empty() && !revision_mode {
-        return Err(crate::Error::invalid_input(
-            "description must not be empty",
-        ));
+        return Err(crate::Error::invalid_input("description must not be empty"));
     }
 
     let user_msg = if revision_mode {
@@ -669,7 +675,10 @@ fn parse_dashboard_reply(raw: &str) -> Result<ModelReply, String> {
 /// Validate + sanitize the proposal: unknown panel types / viz kinds,
 /// unparsable filters, or bogus windows drop that panel (rather than
 /// failing the whole build). Empty result is an error.
-fn validate_proposal(dash: ModelDashboard, hot: &[HotAttribute]) -> Result<AiDashboardProposal, crate::Error> {
+fn validate_proposal(
+    dash: ModelDashboard,
+    hot: &[HotAttribute],
+) -> Result<AiDashboardProposal, crate::Error> {
     let whitelist = ColumnWhitelist::standard(hot);
     let mut panels = Vec::new();
     for mut p in dash.panels {
@@ -720,9 +729,7 @@ fn valid_window(w: &str) -> bool {
     if w.len() < 2 {
         return false;
     }
-    let split = w
-        .find(|c: char| c.is_ascii_alphabetic())
-        .unwrap_or(w.len());
+    let split = w.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(w.len());
     let (num, unit) = w.split_at(split);
     !num.is_empty()
         && num.bytes().all(|b| b.is_ascii_digit())
@@ -746,7 +753,11 @@ fn heuristic_dashboard(description: &str, ctx: &DashboardContext) -> AiDashboard
     let mut panels = vec![
         AiPanel {
             panel_type: "volume".into(),
-            title: if f.is_empty() { "Volume".into() } else { format!("Volume · {f}") },
+            title: if f.is_empty() {
+                "Volume".into()
+            } else {
+                format!("Volume · {f}")
+            },
             window: "1h".into(),
             filter: f.to_string(),
             viz: "chart".into(),
@@ -785,13 +796,15 @@ fn heuristic_dashboard(description: &str, ctx: &DashboardContext) -> AiDashboard
         name: if f.is_empty() {
             "Starter dashboard".into()
         } else {
-            format!("{} dashboard", filter.split(':').nth(1).unwrap_or("service"))
+            format!(
+                "{} dashboard",
+                filter.split(':').nth(1).unwrap_or("service")
+            )
         },
         description: format!("Generated from: {description}"),
         panels,
     }
 }
-
 
 /// Strip markdown fences / leading prose from model output. The system prompt
 /// asks for "ONLY the DSL" but models don't always comply.
@@ -805,7 +818,11 @@ fn parse_model_output(raw: &str) -> String {
         .trim();
     let inner = inner.strip_suffix("```").unwrap_or(inner).trim();
     // If there are multiple lines, the DSL is usually the last non-empty one.
-    let lines: Vec<&str> = inner.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = inner
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     lines.last().copied().unwrap_or("").to_string()
 }
 
@@ -858,7 +875,15 @@ pub async fn complete(
             model,
             base_url,
         } => (
-            call_openai(api_key, model, base_url.as_deref(), system, user_msg, max_tokens).await?,
+            call_openai(
+                api_key,
+                model,
+                base_url.as_deref(),
+                system,
+                user_msg,
+                max_tokens,
+            )
+            .await?,
             "openai",
         ),
         LlmConfig::Anthropic {
@@ -866,8 +891,15 @@ pub async fn complete(
             model,
             base_url,
         } => (
-            call_anthropic(api_key, model, base_url.as_deref(), system, user_msg, max_tokens)
-                .await?,
+            call_anthropic(
+                api_key,
+                model,
+                base_url.as_deref(),
+                system,
+                user_msg,
+                max_tokens,
+            )
+            .await?,
             "anthropic",
         ),
         LlmConfig::NineInference { api_key, model } => (
@@ -1178,7 +1210,10 @@ data: [DONE]\n";
         assert_eq!(p.panels.len(), 1);
         assert_eq!(p.panels[0].window, "1h", "bad window repaired to default");
         assert_eq!(p.panels[0].viz, "chart", "bad viz repaired to default");
-        assert!(p.panels[0].filter.is_empty(), "filter with unknown column dropped");
+        assert!(
+            p.panels[0].filter.is_empty(),
+            "filter with unknown column dropped"
+        );
         assert_eq!(p.panels[0].title, "error-rate", "empty title backfilled");
         assert_eq!(p.name, "AI dashboard", "empty name backfilled");
     }

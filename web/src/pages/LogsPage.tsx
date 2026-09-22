@@ -14,21 +14,34 @@ import {
   TableCell,
 } from "@tremor/react";
 import {
+  ArrowDownTrayIcon,
   ArrowPathIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   SparklesIcon,
 } from "@heroicons/react/24/outline";
-import { api, type LogRow, type SchemaResponse } from "../api";
-import { LevelBadge } from "../components";
+import { api, type LogRow, type LogsParams, type SchemaResponse } from "../api";
+import { LevelBadge, toLocalInput } from "../components";
 
-const WINDOWS = ["5m", "15m", "1h", "6h", "24h", "7d"] as const;
-type Window = (typeof WINDOWS)[number];
+const WINDOWS = ["5m", "15m", "1h", "6h", "24h", "7d", "30d", "90d"] as const;
+
+/** A relative window shorthand the API accepts (e.g. "5d", "12h"). */
+const SHORTHAND_RE = /^\d+[smhdw]$/;
+
+/** Export page size — the server clamps this to its own max. */
+const EXPORT_LIMIT = 10000;
 
 // Default filter hides central-logs' own audit/internal traffic so the
 // explorer opens on *user* services.
 const DEFAULT_FILTER = "-service:central-logs";
-const DEFAULT_WINDOW: Window = "1h";
+const DEFAULT_WINDOW = "1h";
+
+/** True when the custom from/to pair forms a usable range. */
+function customRangeValid(from: string, to: string): boolean {
+  const f = Date.parse(from);
+  const t = Date.parse(to);
+  return !Number.isNaN(f) && !Number.isNaN(t) && t > f;
+}
 
 // Small text helpers — keeps JSX readable without depending on Tremor prop
 // quirks that differ across versions.
@@ -40,14 +53,38 @@ function Muted({ children, className = "" }: { children: React.ReactNode; classN
   );
 }
 
+// Custom-range datetime inputs, styled like the filter input above.
+const customRangeCls =
+  "px-2 py-1 text-sm bg-tremor-background-muted dark:bg-dark-tremor-background-muted border border-tremor-border dark:border-dark-tremor-border rounded-md text-tremor-content-strong dark:text-dark-tremor-content-strong";
+
 export default function LogsPage() {
-  // ?filter=…&window=… pre-fills the explorer (used by the deep-links on
-  // dashboard panels). Unknown window values fall back to the default.
+  // ?filter=…&window=… (or &from=…&to=…) pre-fills the explorer (used by the
+  // deep-links on dashboard panels). A window shorthand that isn't a preset
+  // (e.g. ?window=5d) is kept and added to the dropdown so the backend gets
+  // exactly the linked range; an explicit from/to pair switches to custom.
   const [searchParams] = useSearchParams();
-  const paramWindow = searchParams.get("window") as Window | null;
+  const paramWindow = searchParams.get("window");
+  const paramFrom = searchParams.get("from");
+  const paramTo = searchParams.get("to");
   const [filter, setFilter] = useState(searchParams.get("filter") ?? DEFAULT_FILTER);
-  const [windowSel, setWindowSel] = useState<Window>(
-    paramWindow && WINDOWS.includes(paramWindow) ? paramWindow : DEFAULT_WINDOW,
+  const [extraWindows, setExtraWindows] = useState<string[]>(() =>
+    paramWindow && SHORTHAND_RE.test(paramWindow) && !(WINDOWS as readonly string[]).includes(paramWindow)
+      ? [paramWindow]
+      : [],
+  );
+  const windowOptions = [...WINDOWS, ...extraWindows, "custom"];
+  const [windowSel, setWindowSel] = useState<string>(
+    paramFrom && paramTo
+      ? "custom"
+      : paramWindow && (SHORTHAND_RE.test(paramWindow) || paramWindow === "custom")
+        ? paramWindow
+        : DEFAULT_WINDOW,
+  );
+  const [customFrom, setCustomFrom] = useState(
+    toLocalInput(paramFrom ? new Date(paramFrom) : new Date(Date.now() - 3600_000)),
+  );
+  const [customTo, setCustomTo] = useState(
+    toLocalInput(paramTo ? new Date(paramTo) : new Date()),
   );
   const [rows, setRows] = useState<LogRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -56,6 +93,8 @@ export default function LogsPage() {
   const [schema, setSchema] = useState<SchemaResponse | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiRaw, setAiRaw] = useState<string | null>(null);
@@ -65,10 +104,22 @@ export default function LogsPage() {
     api.schema().then(setSchema).catch(() => {});
   }, []);
 
+  // Query params for the current selection: relative window, or explicit
+  // ISO from/to when "custom" is picked.
+  const rangeParams: LogsParams = useMemo(
+    () =>
+      windowSel === "custom"
+        ? { from: new Date(customFrom).toISOString(), to: new Date(customTo).toISOString() }
+        : { window: windowSel },
+    [windowSel, customFrom, customTo],
+  );
+  const customInvalid = windowSel === "custom" && !customRangeValid(customFrom, customTo);
+
   async function refresh() {
+    if (customInvalid) return;
     setLoading(true);
     try {
-      const resp = await api.logs({ filter, window: windowSel, limit: 200 });
+      const resp = await api.logs({ filter, ...rangeParams, limit: 200 });
       setRows(resp.rows);
       setTotal(resp.total_matched);
       setTruncated(resp.truncated);
@@ -85,7 +136,20 @@ export default function LogsPage() {
     const t = setTimeout(refresh, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, windowSel]);
+  }, [filter, rangeParams]);
+
+  async function exportXlsx() {
+    if (customInvalid) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      await api.logsExport({ filter, ...rangeParams, limit: EXPORT_LIMIT });
+    } catch (e) {
+      setExportError(String(e));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function askAi() {
     setAiBusy(true);
@@ -96,7 +160,10 @@ export default function LogsPage() {
         "Describe what you want to see (e.g. 'errors for user 42 in the last hour'):",
       );
       if (!nl) return;
-      const resp = await api.aiQuery(nl, windowSel);
+      const resp = await api.aiQuery(
+        nl,
+        windowSel === "custom" ? undefined : windowSel,
+      );
       setFilter(resp.filter);
       setAiRaw(`[${resp.provider}] ${resp.raw}`);
     } catch (e) {
@@ -127,15 +194,28 @@ export default function LogsPage() {
         <Flex className="gap-3 justify-end">
           <Muted className="text-xs">updated {lastUpdated}</Muted>
           <Button
+            icon={ArrowDownTrayIcon}
+            variant="secondary"
+            onClick={exportXlsx}
+            loading={exporting}
+            disabled={customInvalid}
+          >
+            Export Excel
+          </Button>
+          <Button
             icon={ArrowPathIcon}
             variant="secondary"
             onClick={refresh}
             loading={loading}
+            disabled={customInvalid}
           >
             Refresh
           </Button>
         </Flex>
       </Flex>
+      {exportError && (
+        <div className="mb-4 cl-error-banner">Export failed: {exportError}</div>
+      )}
 
       {/* Filter bar */}
       <Card className="mb-4">
@@ -163,13 +243,35 @@ export default function LogsPage() {
           </div>
           <div>
             <Muted className="text-xs">Window</Muted>
-            <Select value={windowSel} onValueChange={(v) => setWindowSel(v as Window)} className="mt-1">
-              {WINDOWS.map((w) => (
+            <Select value={windowSel} onValueChange={(v) => setWindowSel(v)} className="mt-1">
+              {windowOptions.map((w) => (
                 <SelectItem key={w} value={w}>
-                  last {w}
+                  {w === "custom" ? "custom range…" : `last ${w}`}
                 </SelectItem>
               ))}
             </Select>
+            {windowSel === "custom" && (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="datetime-local"
+                  value={customFrom}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  className={customRangeCls}
+                  aria-label="from"
+                />
+                <span className="text-tremor-content-subtle dark:text-dark-tremor-content-subtle text-sm">→</span>
+                <input
+                  type="datetime-local"
+                  value={customTo}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  className={customRangeCls}
+                  aria-label="to"
+                />
+              </div>
+            )}
+            {customInvalid && (
+              <div className="mt-1 text-xs text-red-600 dark:text-red-400">from must be before to</div>
+            )}
           </div>
         </div>
         <Flex className="mt-3 justify-start gap-2">
@@ -206,7 +308,11 @@ export default function LogsPage() {
         </Card>
         <Card>
           <div className="cl-stat-label">window</div>
-          <div className="cl-stat-value">{windowSel}</div>
+          <div className="cl-stat-value">
+            {windowSel === "custom"
+              ? `${customFrom.replace("T", " ")} → ${customTo.replace("T", " ")}`
+              : windowSel}
+          </div>
         </Card>
         <Card>
           <div className="cl-stat-label">shown</div>

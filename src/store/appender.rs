@@ -40,86 +40,86 @@ impl LogRow {
     }
 }
 
-/// Insert `rows` using a transaction. The column list is built dynamically from
-/// the configured hot-attribute set, so the prepared statement matches the
-/// table schema exactly.
-pub fn insert_batch(
-    conn: &Connection,
-    hot: &[HotAttribute],
-    rows: &[LogRow],
-) -> Result<usize> {
+/// Insert `rows` using the DuckDB Appender interface (column list built
+/// dynamically from the configured hot-attribute set).
+///
+/// The Appender writes straight into column segments, skipping SQL parsing,
+/// planning and per-statement execution overhead — measured ~370K rows/s vs
+/// ~9K rows/s for 128-row multi-row VALUES statements (see
+/// tests/insert_bench.rs). Note: unlike the previous transactional
+/// multi-row-VALUES path, a failed append may leave a partially-appended
+/// flush; the worker only advances its checkpoint on success, so retries
+/// can duplicate rows after an insert error (crash-restart re-ingest
+/// already had this property — at-least-once delivery).
+pub fn insert_batch(conn: &Connection, hot: &[HotAttribute], rows: &[LogRow]) -> Result<usize> {
     if rows.is_empty() {
         return Ok(0);
     }
 
-    let base_cols = "(ts, insert_ts, source_host, service, level, message, fingerprint, \
-                      trace_id, span_id, attributes, geo_country, raw_len, protocol";
-    let hot_cols: String = if hot.is_empty() {
-        String::new()
-    } else {
-        let names: Vec<&str> = hot.iter().map(|h| h.name.as_str()).collect();
-        format!(", {}", names.join(", "))
-    };
-    let placeholders = (0..(13 + hot.len()))
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!("INSERT INTO logs {base_cols}{hot_cols}) VALUES ({placeholders})");
+    let mut cols: Vec<&str> = BASE_COLUMNS.to_vec();
+    cols.extend(hot.iter().map(|h| h.name.as_str()));
 
-    let mut inserted = 0usize;
-    let tx = conn.unchecked_transaction()?;
-    {
-        let mut stmt = tx.prepare(&sql)?;
-        for r in rows {
-            let attrs = if r.attributes.is_null() {
-                Value::Object(Default::default())
-            } else {
-                r.attributes.clone()
-            };
-            let attrs_str = serde_json::to_string(&attrs).unwrap_or_else(|_| "{}".into());
-
-            // Build a heterogeneous list of owned DuckDB values. `Value`
-            // implements `ToSql`, so this is the simplest way to mix types at
-            // runtime when the column set is dynamic.
-            let mut cells: Vec<DuckValue> = Vec::with_capacity(13 + hot.len());
-            // TIMESTAMP columns: stored as microseconds since epoch (DuckDB's
-            // preferred resolution). DateTime<Tz> implements ToSql but doesn't
-            // have a Value::From impl, so we go through Timestamp directly.
-            cells.push(DuckValue::Timestamp(
-                TimeUnit::Microsecond,
-                r.ts.timestamp_micros(),
-            ));
-            cells.push(DuckValue::Timestamp(
-                TimeUnit::Microsecond,
-                r.insert_ts.timestamp_micros(),
-            ));
-            cells.push(nullable_str(&r.source_host));   // VARCHAR
-            cells.push(nullable_str(&r.service));
-            cells.push(nullable_str(&r.level));
-            cells.push(nullable_str(&r.message));
-            cells.push(nullable_str(&r.fingerprint));
-            cells.push(nullable_str(&r.trace_id));
-            cells.push(nullable_str(&r.span_id));
-            // DuckDB has no dedicated `Json` value variant; a TEXT string is
-            // implicitly cast to JSON on insert into a JSON-typed column.
-            cells.push(DuckValue::Text(attrs_str));
-            cells.push(nullable_str(&r.geo_country));
-            cells.push(DuckValue::Int(r.raw_len));
-            cells.push(nullable_str(&r.protocol));
-
-            // Promoted hot-attribute values, parallel to the configured list.
-            for i in 0..hot.len() {
-                let v = r.hot.get(i).unwrap_or(&HotValue::Null);
-                cells.push(hot_value_to_duck(v));
-            }
-
-            let refs: Vec<&dyn duckdb::ToSql> = cells.iter().map(|c| c as &dyn duckdb::ToSql).collect();
-            stmt.execute(refs.as_slice())?;
-            inserted += 1;
-        }
+    let mut appender = conn.appender_with_columns("logs", &cols)?;
+    for r in rows {
+        let mut cells: Vec<DuckValue> = Vec::with_capacity(13 + hot.len());
+        push_row_cells(&mut cells, r, hot);
+        let refs: Vec<&dyn duckdb::ToSql> = cells.iter().map(|c| c as &dyn duckdb::ToSql).collect();
+        appender.append_row(refs.as_slice())?;
     }
-    tx.commit()?;
-    Ok(inserted)
+    appender.flush()?;
+    Ok(rows.len())
+}
+
+const BASE_COLUMNS: &[&str] = &[
+    "ts",
+    "insert_ts",
+    "source_host",
+    "service",
+    "level",
+    "message",
+    "fingerprint",
+    "trace_id",
+    "span_id",
+    "attributes",
+    "geo_country",
+    "raw_len",
+    "protocol",
+];
+
+/// Build the DuckDB values for one `LogRow`, in column order.
+fn push_row_cells(cells: &mut Vec<DuckValue>, r: &LogRow, hot: &[HotAttribute]) {
+    cells.push(DuckValue::Timestamp(
+        TimeUnit::Microsecond,
+        r.ts.timestamp_micros(),
+    ));
+    cells.push(DuckValue::Timestamp(
+        TimeUnit::Microsecond,
+        r.insert_ts.timestamp_micros(),
+    ));
+    cells.push(nullable_str(&r.source_host)); // VARCHAR
+    cells.push(nullable_str(&r.service));
+    cells.push(nullable_str(&r.level));
+    cells.push(nullable_str(&r.message));
+    cells.push(nullable_str(&r.fingerprint));
+    cells.push(nullable_str(&r.trace_id));
+    cells.push(nullable_str(&r.span_id));
+    // DuckDB has no dedicated `Json` value variant; a TEXT string is
+    // implicitly cast to JSON on insert into a JSON-typed column.
+    let attrs_str = if r.attributes.is_null() {
+        "{}".to_string()
+    } else {
+        serde_json::to_string(&r.attributes).unwrap_or_else(|_| "{}".into())
+    };
+    cells.push(DuckValue::Text(attrs_str));
+    cells.push(nullable_str(&r.geo_country));
+    cells.push(DuckValue::Int(r.raw_len));
+    cells.push(nullable_str(&r.protocol));
+
+    // Promoted hot-attribute values, parallel to the configured list.
+    for i in 0..hot.len() {
+        let v = r.hot.get(i).unwrap_or(&HotValue::Null);
+        cells.push(hot_value_to_duck(v));
+    }
 }
 
 #[inline]

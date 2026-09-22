@@ -35,7 +35,9 @@ fn count_parquet_files(root: &Path) -> usize {
     let mut n = 0;
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -52,7 +54,9 @@ fn dir_size_bytes(dir: &Path) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -221,8 +225,7 @@ async fn list_backups(State(st): State<ApiState>) -> Response {
                     .unwrap_or("")
                     .cmp(a["modified"].as_str().unwrap_or(""))
             });
-            Json(serde_json::json!({ "runs": runs, "local_files": local_files }))
-                .into_response()
+            Json(serde_json::json!({ "runs": runs, "local_files": local_files })).into_response()
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
@@ -265,8 +268,14 @@ struct RestoreBody {
 
 async fn restore(State(st): State<ApiState>, Json(body): Json<RestoreBody>) -> Response {
     // Refuse restoring over the running instance's data dir.
-    let active = st.data_dir.canonicalize().unwrap_or_else(|_| st.data_dir.clone());
-    let target_canon = body.into.canonicalize().unwrap_or_else(|_| body.into.clone());
+    let active = st
+        .data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| st.data_dir.clone());
+    let target_canon = body
+        .into
+        .canonicalize()
+        .unwrap_or_else(|_| body.into.clone());
     if active == target_canon {
         return err(
             StatusCode::BAD_REQUEST,

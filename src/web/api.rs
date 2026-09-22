@@ -9,22 +9,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{translate, AiQueryRequest, LlmConfig};
+use crate::alerts::{compare as alert_compare, AlertCondition};
 use crate::audit::{AuditHandle, ResolvedPeer};
 use crate::config::ServiceQueryLimit;
-use duckdb::params;
-use crate::alerts::{compare as alert_compare, AlertCondition};
-use crate::query::{parse_filter, Clause, CompiledFilter, Op, ColumnWhitelist};
+use crate::query::{parse_filter, Clause, ColumnWhitelist, CompiledFilter, Op};
 use crate::store::compact::glob_match;
 use crate::store::Store;
 use crate::wal::meta::WalMeta;
 use crate::web::auth_api::MaybeAuthInfo;
+use duckdb::params;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -54,6 +54,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/schema/hot", get(schema_hot))
         // Logs explorer
         .route("/api/logs", get(logs_search))
+        .route("/api/logs/export", get(logs_export))
         .route("/api/logs/count", get(logs_count))
         // §4 dashboards
         .route("/api/dashboard/volume", get(dashboard_volume))
@@ -62,13 +63,21 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/dashboard/anomalies", get(dashboard_anomalies))
         .route("/api/dashboard/forecast", get(dashboard_forecast))
         // Dashboard config CRUD
-        .route("/api/dashboard/configs", get(list_dashboard_configs).post(create_dashboard_config))
+        .route(
+            "/api/dashboard/configs",
+            get(list_dashboard_configs).post(create_dashboard_config),
+        )
         .route(
             "/api/dashboard/configs/{id}",
-            get(get_dashboard_config).put(update_dashboard_config).delete(delete_dashboard_config),
+            get(get_dashboard_config)
+                .put(update_dashboard_config)
+                .delete(delete_dashboard_config),
         )
         // Alert rules (architecture §7 approval workflow + evaluator)
-        .route("/api/alert-rules", get(list_alert_rules).post(create_alert_rule))
+        .route(
+            "/api/alert-rules",
+            get(list_alert_rules).post(create_alert_rule),
+        )
         .route(
             "/api/alert-rules/{id}",
             put(update_alert_rule).delete(delete_alert_rule),
@@ -295,8 +304,10 @@ async fn logs_search(
     let rows_result = (|| -> Result<Vec<serde_json::Value>, duckdb::Error> {
         let mut stmt = conn.prepare(&fetch_sql)?;
         let duck_params = params_as_duck(&fetch_params);
-        let refs: Vec<&dyn duckdb::ToSql> =
-            duck_params.iter().map(|v| v as &dyn duckdb::ToSql).collect();
+        let refs: Vec<&dyn duckdb::ToSql> = duck_params
+            .iter()
+            .map(|v| v as &dyn duckdb::ToSql)
+            .collect();
         let rows = stmt.query_map(refs.as_slice(), |row| {
             let ts: chrono::DateTime<chrono::Utc> = row.get(0)?;
             let insert_ts: chrono::DateTime<chrono::Utc> = row.get(1)?;
@@ -316,9 +327,9 @@ async fn logs_search(
             for (i, attr) in hot_attrs.iter().enumerate() {
                 let col = 13 + i;
                 let v = match attr.duckdb_type {
-                    crate::hot::HotType::Bigint => row
-                        .get::<_, Option<i64>>(col)?
-                        .map(serde_json::Value::from),
+                    crate::hot::HotType::Bigint => {
+                        row.get::<_, Option<i64>>(col)?.map(serde_json::Value::from)
+                    }
                     crate::hot::HotType::Double => row
                         .get::<_, Option<f64>>(col)?
                         .map(|f| serde_json::Value::from(f as f64)),
@@ -375,10 +386,348 @@ async fn logs_search(
     }
 }
 
-async fn logs_count(
+// =====================================================================
+// Excel export — logs with JSON attributes expanded into columns
+// =====================================================================
+
+/// Hard cap on exported rows. Exports buffer the full result in memory
+/// (column union must be known before the sheet is written), so unlike the
+/// paginated `/api/logs` this is clamped higher but still bounded.
+const MAX_EXPORT_ROWS: i64 = 10_000;
+
+/// Built-in columns in export order. Hot attributes follow, then one
+/// `attr.<key>` column per distinct key found in any row's `attributes` JSON.
+const EXPORT_BUILTIN_COLUMNS: [&str; 12] = [
+    "ts",
+    "insert_ts",
+    "service",
+    "level",
+    "message",
+    "source_host",
+    "trace_id",
+    "span_id",
+    "protocol",
+    "geo_country",
+    "fingerprint",
+    "raw_len",
+];
+
+/// Recursively flatten a JSON value into dot-path → scalar pairs. Objects
+/// expand one column per leaf entry (`attr.request.route`); arrays and any
+/// other non-scalar land as serialized JSON strings in a single cell.
+fn flatten_json(prefix: &str, v: &serde_json::Value, out: &mut Vec<(String, serde_json::Value)>) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map {
+                let key = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{prefix}.{k}")
+                };
+                flatten_json(&key, val, out);
+            }
+        }
+        other => out.push((prefix.to_string(), other.clone())),
+    }
+}
+
+fn write_xlsx_cell(
+    sheet: &mut rust_xlsxwriter::Worksheet,
+    row: u32,
+    col: u16,
+    v: &serde_json::Value,
+) -> Result<(), rust_xlsxwriter::XlsxError> {
+    match v {
+        serde_json::Value::Null => Ok(()),
+        serde_json::Value::Bool(b) => sheet.write(row, col, *b).map(|_| ()),
+        serde_json::Value::Number(n) => sheet
+            .write(row, col, n.as_f64().unwrap_or_default())
+            .map(|_| ()),
+        serde_json::Value::String(s) => sheet.write(row, col, s.as_str()).map(|_| ()),
+        other => sheet
+            .write(row, col, other.to_string().as_str())
+            .map(|_| ()),
+    }
+}
+
+/// GET /api/logs/export — same filter/window/limit contract as `/api/logs`
+/// (no pagination offset; the newest `limit` matches in range), rendered as
+/// an .xlsx workbook. Every log's `attributes` JSON is expanded into
+/// `attr.<key>` columns so each JSON entry becomes a spreadsheet column.
+async fn logs_export(
     State(st): State<ApiState>,
+    info: MaybeAuthInfo,
+    ResolvedPeer(peer): ResolvedPeer,
     Query(p): Query<LogsParams>,
-) -> impl IntoResponse {
+) -> Response {
+    let limit = p.limit.clamp(1, MAX_EXPORT_ROWS);
+    // Audit like view.logs: that an export happened, not what was exported.
+    if let Some(i) = &info.0 {
+        let mut ev = st
+            .audit
+            .event("export.logs")
+            .actor(i)
+            .source_ip(&peer)
+            .field("limit", limit);
+        if let Some(w) = &p.window {
+            ev = ev.field("window", w.as_str());
+        }
+        ev.emit();
+    }
+    let cols = ColumnWhitelist::standard(st.store.hot_attributes());
+    let compiled = match parse_filter(&p.filter) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    };
+    let (where_body, params) = match compiled.to_sql(&cols) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    };
+
+    let (from_ts, to_ts) = resolve_window(p.window.as_deref(), p.from.as_deref(), p.to.as_deref());
+    if let Err(e) = enforce_service_query_limits(
+        &compiled,
+        (to_ts - from_ts).num_seconds().max(0),
+        &st.query_limits,
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+
+    let mut where_parts: Vec<String> = Vec::new();
+    if !where_body.is_empty() {
+        where_parts.push(format!("({where_body})"));
+    }
+    where_parts.push("ts >= ?".to_string());
+    where_parts.push("ts <= ?".to_string());
+    let where_clause = where_parts.join(" AND ");
+
+    let hot_attrs = st.store.hot_attributes().to_vec();
+    let hot_select = if hot_attrs.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<String> = hot_attrs.iter().map(|a| a.name.clone()).collect();
+        format!(", {}", names.join(", "))
+    };
+    let fetch_sql = format!(
+        "SELECT ts, insert_ts, source_host, service, level, message, fingerprint, \
+         trace_id, span_id, attributes, geo_country, raw_len, protocol{hot_select} \
+         FROM logs WHERE {where_clause} ORDER BY ts DESC LIMIT ? OFFSET ?"
+    );
+
+    let conn = st.store.conn();
+    let conn = conn.lock();
+
+    // Same row shape as logs_search (shared json! mapping) so the export
+    // stays byte-identical to what the explorer displays.
+    let rows_result = (|| -> Result<(Vec<serde_json::Value>, i64), duckdb::Error> {
+        let total: i64 = {
+            let count_sql = format!("SELECT COUNT(*) FROM logs WHERE {where_clause}");
+            let mut count_params = params.clone();
+            count_params.push(from_ts.to_rfc3339());
+            count_params.push(to_ts.to_rfc3339());
+            let duck = params_as_duck(&count_params);
+            let refs: Vec<&dyn duckdb::ToSql> =
+                duck.iter().map(|v| v as &dyn duckdb::ToSql).collect();
+            conn.query_row(&count_sql, refs.as_slice(), |r| r.get(0))?
+        };
+        let mut fetch_params = params.clone();
+        fetch_params.push(from_ts.to_rfc3339());
+        fetch_params.push(to_ts.to_rfc3339());
+        fetch_params.push(limit.to_string());
+        fetch_params.push(p.offset.to_string());
+        let mut stmt = conn.prepare(&fetch_sql)?;
+        let duck = params_as_duck(&fetch_params);
+        let refs: Vec<&dyn duckdb::ToSql> = duck.iter().map(|v| v as &dyn duckdb::ToSql).collect();
+        let mapped = stmt.query_map(refs.as_slice(), |row| {
+            let ts: chrono::DateTime<chrono::Utc> = row.get(0)?;
+            let insert_ts: chrono::DateTime<chrono::Utc> = row.get(1)?;
+            let source_host: Option<String> = row.get(2)?;
+            let service: Option<String> = row.get(3)?;
+            let level: Option<String> = row.get(4)?;
+            let message: Option<String> = row.get(5)?;
+            let fingerprint: Option<String> = row.get(6)?;
+            let trace_id: Option<String> = row.get(7)?;
+            let span_id: Option<String> = row.get(8)?;
+            let attributes: Option<String> = row.get(9)?;
+            let geo_country: Option<String> = row.get(10)?;
+            let raw_len: Option<i32> = row.get(11)?;
+            let protocol: Option<String> = row.get(12)?;
+            let mut hot = serde_json::Map::new();
+            for (i, attr) in hot_attrs.iter().enumerate() {
+                let col = 13 + i;
+                let v = match attr.duckdb_type {
+                    crate::hot::HotType::Bigint => {
+                        row.get::<_, Option<i64>>(col)?.map(serde_json::Value::from)
+                    }
+                    crate::hot::HotType::Double => row
+                        .get::<_, Option<f64>>(col)?
+                        .map(|f| serde_json::Value::from(f as f64)),
+                    crate::hot::HotType::Boolean => row
+                        .get::<_, Option<bool>>(col)?
+                        .map(serde_json::Value::from),
+                    crate::hot::HotType::Varchar => row
+                        .get::<_, Option<String>>(col)?
+                        .map(serde_json::Value::from),
+                };
+                if let Some(v) = v {
+                    hot.insert(attr.name.clone(), v);
+                }
+            }
+            Ok(serde_json::json!({
+                "ts": ts.to_rfc3339(),
+                "insert_ts": insert_ts.to_rfc3339(),
+                "source_host": source_host,
+                "service": service,
+                "level": level,
+                "message": message,
+                "fingerprint": fingerprint,
+                "trace_id": trace_id,
+                "span_id": span_id,
+                "attributes": attributes
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .unwrap_or(serde_json::Value::Null),
+                "geo_country": geo_country,
+                "raw_len": raw_len,
+                "protocol": protocol,
+                "hot": serde_json::Value::Object(hot),
+            }))
+        })?;
+        Ok((mapped.collect::<Result<Vec<_>, _>>()?, total))
+    })();
+
+    let (rows, total) = match rows_result {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("export query: {e}") })),
+            )
+                .into_response()
+        }
+    };
+
+    // Pass 1: flatten every row's attributes and collect the column union in
+    // first-appearance order (stable output for identical data).
+    let mut attr_keys: Vec<String> = Vec::new();
+    let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut flat_rows: Vec<Vec<(String, serde_json::Value)>> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut flat = Vec::new();
+        match row.get("attributes") {
+            Some(serde_json::Value::Object(_)) => {
+                flatten_json("", &row["attributes"], &mut flat);
+            }
+            Some(serde_json::Value::Null) | None => {}
+            // Non-object attributes (shouldn't happen, but be safe): one cell.
+            Some(other) => flat.push((String::new(), other.clone())),
+        }
+        for (k, _) in &flat {
+            if seen_keys.insert(k.clone()) {
+                attr_keys.push(k.clone());
+            }
+        }
+        flat_rows.push(flat);
+    }
+
+    // Column layout: built-ins, hot attributes, then attr.* expansion.
+    let mut columns: Vec<String> = EXPORT_BUILTIN_COLUMNS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    columns.extend(hot_attrs.iter().map(|a| a.name.clone()));
+    columns.extend(attr_keys.iter().map(|k| format!("attr.{k}")));
+
+    // Pass 2: write the workbook. The write is fallible (bad paths, cell
+    // limits), so it's a closure — the handler itself answers in JSON.
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let write_result: Result<(), rust_xlsxwriter::XlsxError> = (|| {
+        let sheet = workbook.add_worksheet().set_name("logs")?;
+        let header_fmt = rust_xlsxwriter::Format::new().set_bold();
+        for (ci, name) in columns.iter().enumerate() {
+            sheet.write_with_format(0, ci as u16, name.as_str(), &header_fmt)?;
+        }
+        for (ri, (row, flat)) in rows.iter().zip(&flat_rows).enumerate() {
+            let r = (ri + 1) as u32;
+            for (ci, name) in columns.iter().enumerate() {
+                let name: &str = name.as_str();
+                let v = if let Some(rest) = name.strip_prefix("attr.") {
+                    flat.iter()
+                        .find(|(k, _)| k == rest)
+                        .map(|(_, v)| v)
+                        .unwrap_or(&serde_json::Value::Null)
+                } else if let Some(v) = row.get(name) {
+                    v
+                } else {
+                    &serde_json::Value::Null
+                };
+                write_xlsx_cell(sheet, r, ci as u16, v)?;
+            }
+        }
+        sheet.set_freeze_panes(1, 0)?;
+        sheet.autofit();
+        Ok(())
+    })();
+    if let Err(e) = write_result {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("xlsx render: {e}") })),
+        )
+            .into_response();
+    }
+    let bytes = match workbook.save_to_buffer() {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("xlsx render: {e}") })),
+            )
+                .into_response()
+        }
+    };
+
+    let filename = format!(
+        "logs-{}-{}.xlsx",
+        from_ts.format("%Y%m%dT%H%M%SZ"),
+        to_ts.format("%Y%m%dT%H%M%SZ")
+    );
+    let mut out_headers = [
+        (
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/vnd.openxmlformats-spreadsheetml.sheet"),
+        ),
+        (
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("attachment; filename=\"logs.xlsx\""),
+        ),
+        (
+            header::HeaderName::from_static("x-total-matched"),
+            HeaderValue::from(total),
+        ),
+    ];
+    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        out_headers[1].1 = v;
+    }
+    (out_headers, bytes).into_response()
+}
+
+async fn logs_count(State(st): State<ApiState>, Query(p): Query<LogsParams>) -> impl IntoResponse {
     let cols = ColumnWhitelist::standard(st.store.hot_attributes());
     let compiled = match parse_filter(&p.filter) {
         Ok(c) => c,
@@ -434,13 +783,18 @@ fn enforce_service_query_limits(
         return Ok(());
     }
     for clause in compiled.terms() {
-        if let Clause::Comparison { key, op: Op::Eq, value, negated: false } = clause {
+        if let Clause::Comparison {
+            key,
+            op: Op::Eq,
+            value,
+            negated: false,
+        } = clause
+        {
             if key != "service" {
                 continue;
             }
             for limit in limits {
-                if glob_match(&limit.pattern, value) && window_secs > limit.max_window_secs as i64
-                {
+                if glob_match(&limit.pattern, value) && window_secs > limit.max_window_secs as i64 {
                     return Err(format!(
                         "query window for service '{value}' is {window_secs}s but the configured \
                          cap is {}s (pattern '{}'); narrow the time range",
@@ -455,7 +809,8 @@ fn enforce_service_query_limits(
 
 /// Resolve a (window, from, to) combo to (from_ts, to_ts). `window` shorthand
 /// wins if present.
-fn resolve_window(    window: Option<&str>,
+fn resolve_window(
+    window: Option<&str>,
     from: Option<&str>,
     to: Option<&str>,
 ) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
@@ -590,7 +945,11 @@ fn with_ts_range(
 /// Resolve the effective (from, to, interval) for a dashboard request.
 fn dashboard_range(
     p: &DashboardParams,
-) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64) {
+) -> (
+    chrono::DateTime<chrono::Utc>,
+    chrono::DateTime<chrono::Utc>,
+    i64,
+) {
     let (from, to) = resolve_window(p.window.as_deref(), p.from.as_deref(), p.to.as_deref());
     let span = (to - from).num_seconds().max(1);
     let interval = bucket_interval_secs(p.bucket.as_deref(), span);
@@ -624,7 +983,11 @@ async fn dashboard_volume(
             params.clone(),
         ),
         None => {
-            let table = if interval >= 3600 { "rollup_1h" } else { "rollup_1m" };
+            let table = if interval >= 3600 {
+                "rollup_1h"
+            } else {
+                "rollup_1m"
+            };
             (
                 format!(
                     "SELECT bucket, SUM(n)::BIGINT AS n FROM {table} \
@@ -812,12 +1175,11 @@ async fn dashboard_anomalies(
                 return Json(serde_json::json!([]));
             }
             let (ts, vs): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
-            let anomalies = match crate::analytics::anomaly::detect_anomalies_once(
-                "volume", &vs, &ts, 3.0,
-            ) {
-                Ok(a) => a,
-                Err(e) => return err_json(e.to_string()),
-            };
+            let anomalies =
+                match crate::analytics::anomaly::detect_anomalies_once("volume", &vs, &ts, 3.0) {
+                    Ok(a) => a,
+                    Err(e) => return err_json(e.to_string()),
+                };
             let rows: Vec<serde_json::Value> = anomalies
                 .iter()
                 .map(|a| {
@@ -942,9 +1304,9 @@ async fn dashboard_forecast(
             "model": resp.model,
         })),
         Ok(Err(e)) => Json(serde_json::json!({"error": e.to_string()})),
-        Err(_) => Json(
-            serde_json::json!({"error": "forecast model panicked (degenerate series?)"}),
-        ),
+        Err(_) => {
+            Json(serde_json::json!({"error": "forecast model panicked (degenerate series?)"}))
+        }
     }
 }
 
@@ -1053,7 +1415,9 @@ async fn create_dashboard_config(
     // DuckDB has no `last_insert_rowid()` (SQLite-ism); pull the id from the
     // sequence up front so the response/audit log carry the real row id
     // instead of silently falling back to 0.
-    let id: i64 = match conn.query_row("SELECT nextval('dashboard_configs_id_seq')", [], |r| r.get(0)) {
+    let id: i64 = match conn.query_row("SELECT nextval('dashboard_configs_id_seq')", [], |r| {
+        r.get(0)
+    }) {
         Ok(v) => v,
         Err(e) => {
             return (
@@ -1301,7 +1665,9 @@ async fn approve_alert_rule(
         .field("alert_id", id)
         .field("updated_rows", n)
         .emit();
-    Json(serde_json::json!({ "id": id, "updated_rows": n, "status": if n > 0 { "active" } else { "unchanged" } }))
+    Json(
+        serde_json::json!({ "id": id, "updated_rows": n, "status": if n > 0 { "active" } else { "unchanged" } }),
+    )
 }
 
 async fn reject_alert_rule(
@@ -1322,7 +1688,9 @@ async fn reject_alert_rule(
         .field("alert_id", id)
         .field("updated_rows", n)
         .emit();
-    Json(serde_json::json!({ "id": id, "updated_rows": n, "status": if n > 0 { "rejected" } else { "unchanged" } }))
+    Json(
+        serde_json::json!({ "id": id, "updated_rows": n, "status": if n > 0 { "rejected" } else { "unchanged" } }),
+    )
 }
 
 // =====================================================================
@@ -1362,9 +1730,8 @@ fn validate_alert_rule(
     {
         use crate::alerts::ThresholdEntry;
         let entries: Vec<ThresholdEntry> = match &cond {
-            AlertCondition::Threshold { thresholds, .. } | AlertCondition::Count { thresholds, .. } => {
-                thresholds.clone()
-            }
+            AlertCondition::Threshold { thresholds, .. }
+            | AlertCondition::Count { thresholds, .. } => thresholds.clone(),
             _ => Vec::new(),
         };
         for (i, e) in entries.iter().enumerate() {
@@ -1392,11 +1759,7 @@ fn validate_alert_rule(
         }
         AlertCondition::ErrorGroupThreshold { .. } => "error_group_threshold".to_string(),
         _ => {
-            let m = body
-                .metric
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default();
+            let m = body.metric.as_deref().map(str::trim).unwrap_or_default();
             if m.is_empty() {
                 return Err("metric is required for threshold/anomaly conditions".into());
             }
@@ -1404,7 +1767,13 @@ fn validate_alert_rule(
         }
     };
     // At least one delivery target, and referenced channels must exist.
-    if body.channels.is_empty() && body.channel.as_deref().map(str::trim).unwrap_or_default().is_empty()
+    if body.channels.is_empty()
+        && body
+            .channel
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
     {
         return Err("at least one notification channel is required".into());
     }
@@ -1426,10 +1795,7 @@ fn validate_alert_rule(
     }
     if let Some(url) = body.channel.as_deref() {
         let url = url.trim();
-        if !url.is_empty()
-            && !url.starts_with("http://")
-            && !url.starts_with("https://")
-        {
+        if !url.is_empty() && !url.starts_with("http://") && !url.starts_with("https://") {
             return Err("legacy channel must be an http(s) webhook URL".into());
         }
     }
@@ -1525,7 +1891,9 @@ async fn delete_alert_rule(
     let conn = st.store.conn();
     let conn = conn.lock();
     // Firing history is kept (audit trail); only the rule row goes.
-    let n = conn.execute("DELETE FROM alert_rules WHERE id = ?", [id]).unwrap_or(0);
+    let n = conn
+        .execute("DELETE FROM alert_rules WHERE id = ?", [id])
+        .unwrap_or(0);
     drop(conn);
     st.audit
         .event("alert.delete")
@@ -1611,6 +1979,47 @@ fn validate_channel_config(ctype: &str, config: &serde_json::Value) -> Result<()
     }
 }
 
+/// Live-check a Telegram bot token via `getMe` so wrong-kind secrets (e.g. a
+/// `clk_…` API key) or typos are rejected at save time instead of failing on
+/// first delivery with a cryptic 404.
+async fn verify_telegram_token(http: &reqwest::Client, token: &str) -> Result<(), String> {
+    let url = format!("https://api.telegram.org/bot{}/getMe", token.trim());
+    let resp = http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("telegram token check failed: {e}"))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if body["ok"].as_bool() == Some(true) {
+        return Ok(());
+    }
+    if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err("bot_token is not a valid Telegram bot token — get one from @BotFather".into());
+    }
+    Err(format!("telegram token check returned HTTP {status}"))
+}
+
+/// Validate the incoming telegram token only when the caller is actually
+/// setting a new one (empty or the masked placeholder means "keep stored").
+async fn ensure_telegram_token_valid(
+    http: &reqwest::Client,
+    ctype: &str,
+    config: &serde_json::Value,
+) -> Result<(), String> {
+    if ctype != "telegram" {
+        return Ok(());
+    }
+    let tok = config
+        .get("bot_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if tok.trim().is_empty() || tok.trim() == SECRET_MASK {
+        return Ok(());
+    }
+    verify_telegram_token(http, tok).await
+}
+
 #[derive(Serialize)]
 struct AlertChannelOut {
     id: i64,
@@ -1667,6 +2076,9 @@ async fn create_alert_channel(
         return Json(serde_json::json!({"error": "name must be 1..=128 chars"}));
     }
     if let Err(e) = validate_channel_config(&body.channel_type, &body.config) {
+        return Json(serde_json::json!({"error": e}));
+    }
+    if let Err(e) = ensure_telegram_token_valid(&st.http, &body.channel_type, &body.config).await {
         return Json(serde_json::json!({"error": e}));
     }
     let conn = st.store.conn();
@@ -1730,6 +2142,9 @@ async fn update_alert_channel(
     if name.is_empty() || name.len() > 128 {
         return Json(serde_json::json!({"error": "name must be 1..=128 chars"}));
     }
+    if let Err(e) = ensure_telegram_token_valid(&st.http, &body.channel_type, &body.config).await {
+        return Json(serde_json::json!({"error": e}));
+    }
     let conn = st.store.conn();
     let conn = conn.lock();
     let stored: Option<String> = conn
@@ -1740,7 +2155,9 @@ async fn update_alert_channel(
         )
         .ok();
     let Some(stored) = stored else {
-        return Json(serde_json::json!({"error": format!("channel {id} ({}) not found", body.channel_type)}));
+        return Json(
+            serde_json::json!({"error": format!("channel {id} ({}) not found", body.channel_type)}),
+        );
     };
     let merged = match merge_channel_config(&stored, &body.channel_type, &body.config) {
         Ok(m) => m,
@@ -1808,7 +2225,8 @@ async fn test_alert_channel(
         channel: String::new(),
         channel_ids: vec![id],
     };
-    let (ok, err) = crate::alerts::deliver(&st.http, Some(st.smtp.as_ref()), &target, &sample).await;
+    let (ok, err) =
+        crate::alerts::deliver(&st.http, Some(st.smtp.as_ref()), &target, &sample).await;
     st.audit
         .event("alert.channel.test")
         .actor(info.0.as_ref().expect("middleware enforces admin scope"))
@@ -1982,10 +2400,7 @@ async fn traces_list(State(st): State<ApiState>, Query(p): Query<TracesParams>) 
 
 /// `GET /api/traces/{trace_id}` — every stored span for one trace, in
 /// start-time order, with the queryable span fields promoted to top level.
-async fn trace_detail(
-    State(st): State<ApiState>,
-    Path(trace_id): Path<String>,
-) -> Response {
+async fn trace_detail(State(st): State<ApiState>, Path(trace_id): Path<String>) -> Response {
     let conn = st.store.conn();
     let conn = conn.lock();
     let sql = "SELECT ts, service, level, message, span_id, \
@@ -2119,6 +2534,32 @@ mod tests {
     }
 
     #[test]
+    fn flatten_json_expands_nested_objects_into_dot_paths() {
+        let v = serde_json::json!({
+            "request": { "route": "/x", "retries": 2 },
+            "tags": ["a", "b"],
+            "ok": true
+        });
+        let mut out = Vec::new();
+        flatten_json("", &v, &mut out);
+        let keys: Vec<&str> = out.iter().map(|(k, _)| k.as_str()).collect();
+        // Key order follows serde_json's map (alphabetical here); the export
+        // unions keys across rows in first-appearance order on top of this.
+        assert_eq!(keys, vec!["ok", "request.retries", "request.route", "tags"]);
+        assert_eq!(out[1].1, serde_json::json!(2));
+        assert_eq!(out[2].1, serde_json::json!("/x"));
+        // Arrays are not expanded — they land as a JSON string in one cell.
+        assert_eq!(out[3].1.to_string(), r#"["a","b"]"#);
+    }
+
+    #[test]
+    fn flatten_json_scalar_root_lands_under_empty_key() {
+        let mut out = Vec::new();
+        flatten_json("", &serde_json::json!("plain"), &mut out);
+        assert_eq!(out, vec![("".to_string(), serde_json::json!("plain"))]);
+    }
+
+    #[test]
     fn window_shorthand_defaults_to_one_hour_when_empty() {
         let (from, to) = resolve_window(None, None, None);
         let span = to - from;
@@ -2130,8 +2571,11 @@ mod tests {
         let (from, _to) = resolve_window(Some("5m"), None, None);
         let span = chrono::Utc::now() - from;
         // ~5 minutes (within a small slack for test timing).
-        assert!(span.num_seconds() >= 290 && span.num_seconds() <= 310,
-            "got {}s", span.num_seconds());
+        assert!(
+            span.num_seconds() >= 290 && span.num_seconds() <= 310,
+            "got {}s",
+            span.num_seconds()
+        );
     }
 
     #[test]
@@ -2185,8 +2629,9 @@ mod tests {
     fn dashboard_filter_compiles_or_rejects() {
         assert!(compile_dashboard_filter(None, &[]).unwrap().is_none());
         assert!(compile_dashboard_filter(Some("  "), &[]).unwrap().is_none());
-        let (body, params) =
-            compile_dashboard_filter(Some("service:api level:error"), &[]).unwrap().unwrap();
+        let (body, params) = compile_dashboard_filter(Some("service:api level:error"), &[])
+            .unwrap()
+            .unwrap();
         assert!(body.contains("service = ?"));
         assert_eq!(params.len(), 2);
         // Unknown column → friendly error, not a panic.

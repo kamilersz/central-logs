@@ -45,6 +45,11 @@ export default function AlertsPage() {
     await api.deleteAlertRule(id);
     refresh();
   }
+  const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
+  function editRule(r: AlertRule) {
+    setEditingRule(r);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   const all = rules ?? [];
   const pending = all.filter((r) => r.status === "pending_approval");
@@ -72,7 +77,13 @@ export default function AlertsPage() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
         {/* ── left: rule builder + lists ── */}
         <div className="xl:col-span-2 space-y-4">
-          <RuleBuilder channels={channels ?? []} onCreated={refresh} />
+          <RuleBuilder
+            key={editingRule ? `edit-${editingRule.id}` : "new"}
+            channels={channels ?? []}
+            onSaved={refresh}
+            editing={editingRule}
+            onCancelEdit={() => setEditingRule(null)}
+          />
 
           {pending.length > 0 && (
             <section>
@@ -81,7 +92,7 @@ export default function AlertsPage() {
               </h3>
               <div className="space-y-2">
                 {pending.map((r) => (
-                  <RuleRow key={r.id} rule={r} channels={channels ?? []} onApprove={approve} onReject={reject} onDelete={deleteRule} />
+                  <RuleRow key={r.id} rule={r} channels={channels ?? []} onApprove={approve} onReject={reject} onDelete={deleteRule} onEdit={editRule} />
                 ))}
               </div>
             </section>
@@ -94,7 +105,7 @@ export default function AlertsPage() {
               </h3>
               <div className="space-y-2">
                 {active.map((r) => (
-                  <RuleRow key={r.id} rule={r} channels={channels ?? []} onDelete={deleteRule} />
+                  <RuleRow key={r.id} rule={r} channels={channels ?? []} onDelete={deleteRule} onEdit={editRule} />
                 ))}
               </div>
             </section>
@@ -107,7 +118,7 @@ export default function AlertsPage() {
               </h3>
               <div className="space-y-2">
                 {rejected.map((r) => (
-                  <RuleRow key={r.id} rule={r} channels={channels ?? []} onDelete={deleteRule} />
+                  <RuleRow key={r.id} rule={r} channels={channels ?? []} onDelete={deleteRule} onEdit={editRule} />
                 ))}
               </div>
             </section>
@@ -139,21 +150,37 @@ type ThresholdRow = { severity: string; comparator: string; number: string };
 
 function RuleBuilder({
   channels,
-  onCreated,
+  onSaved,
+  editing,
+  onCancelEdit,
 }: {
   channels: AlertChannel[];
-  onCreated: () => void;
+  onSaved: () => void;
+  editing?: AlertRule | null;
+  onCancelEdit?: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<"count" | "metric">("count");
-  const [filter, setFilter] = useState("service:api level:error");
-  const [metric, setMetric] = useState(METRICS[0]);
-  const [rows, setRows] = useState<ThresholdRow[]>([
-    { severity: "warning", comparator: ">=", number: "50" },
-  ]);
-  const [windowLabel, setWindowLabel] = useState("5m");
-  const [cooldownMin, setCooldownMin] = useState("15");
-  const [selected, setSelected] = useState<number[]>([]);
+  // Prefill from `editing` — the parent remounts us via `key` per rule id.
+  const cond = (editing?.condition ?? {}) as Record<string, unknown>;
+  const [name, setName] = useState(editing?.name ?? "");
+  const [kind, setKind] = useState<"count" | "metric">(cond.type === "threshold" ? "metric" : "count");
+  const [filter, setFilter] = useState(typeof cond.filter === "string" ? cond.filter : "service:api level:error");
+  const [metric, setMetric] = useState(
+    editing?.metric && editing.metric !== "events_matching_filter" ? editing.metric : METRICS[0],
+  );
+  const [rows, setRows] = useState<ThresholdRow[]>(
+    Array.isArray(cond.thresholds) && cond.thresholds.length > 0
+      ? (cond.thresholds as { severity: string; comparator: string; value: number }[]).map((t) => ({
+          severity: t.severity,
+          comparator: t.comparator,
+          number: String(t.value),
+        }))
+      : [{ severity: "warning", comparator: ">=", number: "50" }],
+  );
+  const [windowLabel, setWindowLabel] = useState(
+    WINDOWS.find(([, s]) => s === cond.window_secs)?.[0] ?? "5m",
+  );
+  const [cooldownMin, setCooldownMin] = useState(String(Math.round(Number(cond.cooldown_secs ?? 900) / 60)));
+  const [selected, setSelected] = useState<number[]>(editing?.channels ?? []);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -200,15 +227,26 @@ function RuleBuilder({
           ...base,
         } satisfies ThresholdCondition;
       }
-      const resp = await api.createAlertRule({
-        name,
-        condition,
-        metric: kind === "metric" ? metric : undefined,
-        channels: selected,
-      });
-      setOk(`alert #${resp.id} created and active`);
-      setName("");
-      onCreated();
+      if (editing) {
+        await api.updateAlertRule(editing.id, {
+          name,
+          condition,
+          metric: kind === "metric" ? metric : undefined,
+          channels: selected,
+        });
+        setOk("alert updated");
+        onSaved();
+      } else {
+        const resp = await api.createAlertRule({
+          name,
+          condition,
+          metric: kind === "metric" ? metric : undefined,
+          channels: selected,
+        });
+        setOk(`alert #${resp.id} created and active`);
+        setName("");
+        onSaved();
+      }
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
@@ -221,7 +259,18 @@ function RuleBuilder({
 
   return (
     <Card>
-      <div className="text-sm font-medium mb-3">New alert</div>
+      <div className="text-sm font-medium mb-3 flex items-center justify-between">
+        <span>{editing ? `Edit alert #${editing.id}` : "New alert"}</span>
+        {editing && onCancelEdit && (
+          <button
+            type="button"
+            onClick={onCancelEdit}
+            className="text-xs text-tremor-content-subtle dark:text-dark-tremor-content-subtle hover:underline"
+          >
+            cancel editing
+          </button>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <label className="block col-span-2">
@@ -370,9 +419,14 @@ function RuleBuilder({
         </div>
       )}
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex justify-end gap-2">
+        {editing && onCancelEdit && (
+          <Button variant="secondary" onClick={onCancelEdit} disabled={busy}>
+            Cancel
+          </Button>
+        )}
         <Button onClick={submit} loading={busy} disabled={!name.trim()}>
-          Create alert
+          {editing ? "Save changes" : "Create alert"}
         </Button>
       </div>
     </Card>
@@ -394,6 +448,35 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
   const [err, setErr] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<Record<number, { ok: boolean; text: string }>>({});
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editChatId, setEditChatId] = useState("");
+  const [editToken, setEditToken] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editErr, setEditErr] = useState<string | null>(null);
+
+  function startEdit(c: AlertChannel) {
+    setEditingId(c.id);
+    setEditChatId(String(c.config.chat_id ?? ""));
+    setEditToken("");
+    setEditErr(null);
+  }
+
+  async function saveEdit(c: AlertChannel) {
+    setEditBusy(true);
+    setEditErr(null);
+    try {
+      // Omit bot_token when untouched — the backend keeps the stored secret.
+      const config: Record<string, unknown> = { chat_id: editChatId.trim() };
+      if (editToken.trim()) config.bot_token = editToken.trim();
+      await api.updateAlertChannel(c.id, { name: c.name, type: c.type, config });
+      setEditingId(null);
+      onChanged();
+    } catch (e) {
+      setEditErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setEditBusy(false);
+    }
+  }
 
   async function addChannel() {
     setBusy(true);
@@ -459,15 +542,51 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
                 {c.type === "telegram" && `→ chat ${c.config.chat_id}`}
                 {c.type === "webhook" && `→ ${c.config.url}`}
               </div>
-              <div className="flex items-center gap-2 mt-2">
-                <button
-                  type="button"
-                  onClick={() => test(c.id)}
-                  disabled={testingId === c.id}
-                  className="px-2 py-0.5 rounded text-[11px] border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand disabled:opacity-50"
-                >
-                  {testingId === c.id ? "testing…" : "test"}
-                </button>
+              {editingId === c.id && c.type === "telegram" ? (
+                <div className="mt-2 space-y-2">
+                  <label className="block">
+                    <span className="cl-stat-label">chat id</span>
+                    <input className={inputCls} value={editChatId} onChange={(e) => setEditChatId(e.target.value)} placeholder="-1001234567890" />
+                  </label>
+                  <label className="block">
+                    <span className="cl-stat-label">bot token</span>
+                    <input
+                      className={inputCls}
+                      type="password"
+                      value={editToken}
+                      onChange={(e) => setEditToken(e.target.value)}
+                      placeholder={String(c.config.bot_token_masked ?? "unchanged")}
+                    />
+                  </label>
+                  {editErr && <div className="cl-error-banner">{editErr}</div>}
+                  <div className="flex gap-2">
+                    <Button size="xs" onClick={() => saveEdit(c)} loading={editBusy} disabled={!editChatId.trim()}>
+                      Save
+                    </Button>
+                    <Button size="xs" variant="secondary" onClick={() => setEditingId(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => test(c.id)}
+                    disabled={testingId === c.id}
+                    className="px-2 py-0.5 rounded text-[11px] border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand disabled:opacity-50"
+                  >
+                    {testingId === c.id ? "testing…" : "test"}
+                  </button>
+                  {c.type === "telegram" && (
+                    <button
+                      type="button"
+                      onClick={() => startEdit(c)}
+                      className="px-2 py-0.5 rounded text-[11px] border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand"
+                    >
+                      edit
+                    </button>
+                  )}
                 <button
                   type="button"
                   onClick={() => remove(c.id)}
@@ -480,7 +599,8 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
                     {testResult[c.id].text}
                   </span>
                 )}
-              </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -560,11 +680,14 @@ function describeCondition(rule: AlertRule): string {
   const c = rule.condition as any;
   if (!c || typeof c !== "object") return "—";
   const win = c.window_secs ? WINDOWS.find(([l, s]) => s === c.window_secs)?.[0] ?? `${c.window_secs}s` : "?";
+  const thText = Array.isArray(c.thresholds) && c.thresholds.length > 0
+    ? c.thresholds.map((t: { severity: string; comparator: string; value: number }) => `${t.severity} ${t.comparator} ${t.value}`).join(", ")
+    : `${c.comparator ?? ">="} ${c.value ?? c.count ?? "?"}`;
   if (c.type === "count") {
-    return `${c.comparator ?? ">="} ${c.count} matching "${c.filter}" per ${win}`;
+    return `${thText} matching "${c.filter}" per ${win}`;
   }
   if (c.type === "threshold") {
-    return `${rule.metric} ${c.comparator} ${c.value} per ${win}`;
+    return `${rule.metric}: ${thText} per ${win}`;
   }
   if (c.type === "anomaly") {
     return `anomaly ≥ ${c.min_severity ?? "high"} per ${win}`;
@@ -578,12 +701,14 @@ function RuleRow({
   onApprove,
   onReject,
   onDelete,
+  onEdit,
 }: {
   rule: AlertRule;
   channels: AlertChannel[];
   onApprove?: (id: number) => Promise<void>;
   onReject?: (id: number) => Promise<void>;
   onDelete?: (id: number) => Promise<void>;
+  onEdit?: (rule: AlertRule) => void;
 }) {
   const condStr = (() => {
     try {
@@ -643,6 +768,14 @@ function RuleRow({
                 Reject
               </button>
             </>
+          )}
+          {onEdit && (
+            <button
+              onClick={() => onEdit(rule)}
+              className="px-2 py-1 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand"
+            >
+              edit
+            </button>
           )}
           {onDelete && (
             <button

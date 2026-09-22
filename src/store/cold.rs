@@ -35,23 +35,30 @@ impl ColdStore {
                 let mut b = object_store::aws::AmazonS3Builder::new()
                     .with_bucket_name(&cfg.bucket)
                     // MinIO & friends need an explicit endpoint + plain HTTP.
-                    .with_allow_http(cfg.endpoint.as_deref().is_some_and(|e| e.starts_with("http://")));
+                    .with_allow_http(
+                        cfg.endpoint
+                            .as_deref()
+                            .is_some_and(|e| e.starts_with("http://")),
+                    );
                 if let Some(e) = &cfg.endpoint {
                     b = b.with_endpoint(e);
                 }
                 if let Some(r) = &cfg.region {
                     b = b.with_region(r);
                 }
-                Arc::new(b.build().map_err(|e| {
-                    crate::Error::config(format!("cold_storage s3 build: {e}"))
-                })?)
+                Arc::new(
+                    b.build()
+                        .map_err(|e| crate::Error::config(format!("cold_storage s3 build: {e}")))?,
+                )
             }
             "gcs" => {
                 let b = object_store::gcp::GoogleCloudStorageBuilder::new()
                     .with_bucket_name(&cfg.bucket);
-                Arc::new(b.build().map_err(|e| {
-                    crate::Error::config(format!("cold_storage gcs build: {e}"))
-                })?)
+                Arc::new(
+                    b.build().map_err(|e| {
+                        crate::Error::config(format!("cold_storage gcs build: {e}"))
+                    })?,
+                )
             }
             other => {
                 return Err(crate::Error::config(format!(
@@ -164,9 +171,8 @@ pub async fn sync_once(
     let mut known: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     {
         let conn = store.lock();
-        let mut stmt = conn.prepare(
-            "SELECT rel_path, remote_key FROM cold_files WHERE deleted_at IS NULL",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT rel_path, remote_key FROM cold_files WHERE deleted_at IS NULL")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -303,20 +309,17 @@ mod tests {
         let body = b"parquet-bytes";
         std::fs::write(svc_dir.join("part-0.parquet"), body).unwrap();
 
-        let store = crate::store::Store::open(
-            &tmp.path().join("cl.duckdb"),
-            local_dir.clone(),
-            Vec::new(),
-        )
-        .unwrap();
+        let store =
+            crate::store::Store::open(&tmp.path().join("cl.duckdb"), local_dir.clone(), Vec::new())
+                .unwrap();
 
         // In-memory-ish object store backed by a local directory.
         let remote_root = tmp.path().join("remote");
         std::fs::create_dir_all(&remote_root).unwrap();
         let cold = ColdStore {
-            inner: Arc::new(object_store::local::LocalFileSystem::new_with_prefix(
-                remote_root.clone(),
-            ).unwrap()),
+            inner: Arc::new(
+                object_store::local::LocalFileSystem::new_with_prefix(remote_root.clone()).unwrap(),
+            ),
             prefix: "archive".into(),
         };
 

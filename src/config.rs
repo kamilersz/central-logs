@@ -94,6 +94,16 @@ pub struct Config {
     /// default (LESSON_LEARNED: compression was half the cost saving).
     pub parquet_compression: String,
 
+    /// DuckDB engine memory cap, e.g. "512MB", "2GB" (plain bytes also
+    /// accepted). Empty = DuckDB default (~80% of system RAM). Bounds the
+    /// memory a single heavy query / compaction can claim.
+    #[serde(default)]
+    pub duckdb_memory_limit: String,
+    /// DuckDB worker threads. 0 = DuckDB default (one thread per core).
+    /// Lower this when the process shares a box with the ingest path.
+    #[serde(default)]
+    pub duckdb_threads: usize,
+
     /// JSON attribute keys stripped at parse time, before persistence.
     /// "Remove fields you don't need early — smaller messages travel
     /// faster" and storage only pays for what you keep.
@@ -295,11 +305,15 @@ impl RetentionConfig {
     }
 
     pub fn hot_max_bytes_value(&self) -> Option<u64> {
-        self.hot_max_bytes.as_deref().and_then(|s| parse_size(s).ok())
+        self.hot_max_bytes
+            .as_deref()
+            .and_then(|s| parse_size(s).ok())
     }
 
     pub fn wal_max_bytes_value(&self) -> Option<u64> {
-        self.wal_max_bytes.as_deref().and_then(|s| parse_size(s).ok())
+        self.wal_max_bytes
+            .as_deref()
+            .and_then(|s| parse_size(s).ok())
     }
 }
 
@@ -406,10 +420,9 @@ pub enum Schedule {
 /// Parse a duration like `45s`, `12h`, `30d`, `2mo` (60d), `1y` (365d).
 pub fn parse_duration(s: &str) -> Result<chrono::Duration, crate::Error> {
     let t = s.trim().to_ascii_lowercase();
-    let (num, unit) = t.split_at(
-        t.find(|c: char| c.is_ascii_alphabetic())
-            .ok_or_else(|| crate::Error::config(format!("duration '{s}' needs a unit (s/m/h/d/mo/y)")))?,
-    );
+    let (num, unit) = t.split_at(t.find(|c: char| c.is_ascii_alphabetic()).ok_or_else(|| {
+        crate::Error::config(format!("duration '{s}' needs a unit (s/m/h/d/mo/y)"))
+    })?);
     let n: f64 = num
         .trim()
         .parse()
@@ -428,7 +441,9 @@ pub fn parse_duration(s: &str) -> Result<chrono::Duration, crate::Error> {
         }
     };
     if secs <= 0.0 {
-        return Err(crate::Error::config(format!("duration '{s}' must be positive")));
+        return Err(crate::Error::config(format!(
+            "duration '{s}' must be positive"
+        )));
     }
     Ok(chrono::Duration::seconds(secs as i64))
 }
@@ -535,6 +550,8 @@ impl Default for Config {
             retention_days: 30,
             service_retention: Vec::new(),
             parquet_compression: "zstd".to_string(),
+            duckdb_memory_limit: String::new(),
+            duckdb_threads: 0,
             drop_attributes: Vec::new(),
             unwrap_message_json: true,
             service_query_limits: Vec::new(),
@@ -585,6 +602,30 @@ impl Config {
                 "parquet_compression must be one of {PARQUET_CODECS:?} (got '{}')",
                 self.parquet_compression
             )));
+        }
+        // DuckDB engine tuning. memory_limit is interpolated into
+        // `SET memory_limit='…'`, so it must match DuckDB's byte-spec format
+        // (optional decimal + B/KB/MB/GB/TB, or plain bytes) — this also
+        // keeps quotes/semicolons out of the statement. Empty = default.
+        let ml = self.duckdb_memory_limit.trim();
+        if !ml.is_empty() {
+            let num_len = ml.trim_end_matches(|c: char| c.is_ascii_alphabetic()).len();
+            let (num, unit) = ml.split_at(num_len);
+            let unit = unit.to_ascii_uppercase();
+            let ok = !num.is_empty()
+                && num.parse::<f64>().map(|v| v > 0.0).unwrap_or(false)
+                && matches!(unit.as_str(), "" | "B" | "KB" | "MB" | "GB" | "TB");
+            if !ok {
+                return Err(crate::Error::config(format!(
+                    "duckdb_memory_limit must look like '512MB', '2GB' or plain bytes (got '{}')",
+                    self.duckdb_memory_limit
+                )));
+            }
+        }
+        if self.duckdb_threads > 4096 {
+            return Err(crate::Error::config(
+                "duckdb_threads must be between 0 (auto) and 4096",
+            ));
         }
         // Per-service retention rules: glob patterns are matched against the
         // sanitized cold-tier partition dir name, so '/' can't appear.
@@ -708,9 +749,7 @@ impl Config {
         // served on a non-loopback interface with no bearer-token auth. Not
         // fatal — single-node loopback dev is the documented default mode —
         // but anyone binding to 0.0.0.0 should set http_api_key.
-        if self.http_api_key.trim().is_empty()
-            && !is_loopback_bind(&self.http_bind)
-        {
+        if self.http_api_key.trim().is_empty() && !is_loopback_bind(&self.http_bind) {
             tracing::warn!(
                 bind = %self.http_bind,
                 "HTTP API is bound to a non-loopback interface with http_api_key unset; \
@@ -725,16 +764,21 @@ impl Config {
         }
         // Retention / backup sanity.
         if let Some(age) = &self.retention.hot_max_age {
-            parse_duration(age).map_err(|e| crate::Error::config(format!("retention.hot_max_age: {e}")))?;
+            parse_duration(age)
+                .map_err(|e| crate::Error::config(format!("retention.hot_max_age: {e}")))?;
         }
         if let Some(sz) = &self.retention.hot_max_bytes {
-            parse_size(sz).map_err(|e| crate::Error::config(format!("retention.hot_max_bytes: {e}")))?;
+            parse_size(sz)
+                .map_err(|e| crate::Error::config(format!("retention.hot_max_bytes: {e}")))?;
         }
         if let Some(sz) = &self.retention.wal_max_bytes {
-            parse_size(sz).map_err(|e| crate::Error::config(format!("retention.wal_max_bytes: {e}")))?;
+            parse_size(sz)
+                .map_err(|e| crate::Error::config(format!("retention.wal_max_bytes: {e}")))?;
         }
         if self.backup.enabled {
-            self.backup.parsed_schedule().map_err(|e| crate::Error::config(format!("backup.{}", e)))?;
+            self.backup
+                .parsed_schedule()
+                .map_err(|e| crate::Error::config(format!("backup.{}", e)))?;
             if matches!(self.backup.parsed_schedule(), Ok(Schedule::Daily { .. })) {
                 let tz: Result<chrono_tz::Tz, _> = self.backup.timezone.parse();
                 if tz.is_err() {
@@ -847,7 +891,11 @@ pub fn parse_duration_secs(s: &str) -> Result<u64, String> {
 /// CLI flags (architecture: clap-based). Most knobs come from config; CLI flags
 /// exist only for the things you typically want to override at launch.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "central-logs", version, about = "Self-hosted centralized logging platform")]
+#[command(
+    name = "central-logs",
+    version,
+    about = "Self-hosted centralized logging platform"
+)]
 pub struct Cli {
     /// Path to TOML config file.
     #[arg(short, long, env = "CENTRAL_LOGS_CONFIG")]
@@ -939,6 +987,14 @@ pub struct Cli {
     /// --service-query-limit 'payment_*=24h'
     #[arg(long = "service-query-limit", value_name = "GLOB=DURATION")]
     pub service_query_limits: Vec<String>,
+
+    /// DuckDB engine memory cap, e.g. '512MB', '2GB' (empty = auto, ~80% RAM).
+    #[arg(long, env = "CENTRAL_LOGS_DUCKDB_MEMORY_LIMIT", value_name = "LIMIT")]
+    pub duckdb_memory_limit: Option<String>,
+
+    /// DuckDB worker threads (0 = auto, one per core).
+    #[arg(long, env = "CENTRAL_LOGS_DUCKDB_THREADS")]
+    pub duckdb_threads: Option<usize>,
 }
 
 /// Load config from: defaults ← TOML file (if provided) ← env (CENTRAL_LOGS_*) ← CLI overrides.
@@ -951,7 +1007,9 @@ pub fn load(cli: &Cli) -> crate::Result<Config> {
 
     fig = fig.merge(Env::prefixed("CENTRAL_LOGS_").split("__"));
 
-    let mut cfg: Config = fig.extract().map_err(|e| crate::Error::config(e.to_string()))?;
+    let mut cfg: Config = fig
+        .extract()
+        .map_err(|e| crate::Error::config(e.to_string()))?;
 
     // Flat LLM env contract (.env / systemd EnvironmentFile friendly) —
     // applied only when [llm] was not already configured via TOML:
@@ -1038,7 +1096,8 @@ pub fn load(cli: &Cli) -> crate::Result<Config> {
             Err(e) => return Err(crate::Error::config(format!("--hot-attribute: {e}"))),
         }
     }
-    cfg.drop_attributes.extend(cli.drop_attributes.iter().cloned());
+    cfg.drop_attributes
+        .extend(cli.drop_attributes.iter().cloned());
     if cli.no_unwrap_message_json {
         cfg.unwrap_message_json = false;
     }
@@ -1064,9 +1123,8 @@ pub fn load(cli: &Cli) -> crate::Result<Config> {
                 "--service-query-limit expects GLOB=DURATION, got '{spec}'"
             ))
         })?;
-        let secs = parse_duration_secs(dur).map_err(|e| {
-            crate::Error::config(format!("--service-query-limit: {e}"))
-        })?;
+        let secs = parse_duration_secs(dur)
+            .map_err(|e| crate::Error::config(format!("--service-query-limit: {e}")))?;
         cfg.service_query_limits.push(ServiceQueryLimit {
             pattern: pattern.to_string(),
             max_window_secs: secs,
@@ -1083,6 +1141,12 @@ pub fn load(cli: &Cli) -> crate::Result<Config> {
     }
     if let Some(k) = cli.http_api_key.clone() {
         cfg.http_api_key = k;
+    }
+    if let Some(v) = &cli.duckdb_memory_limit {
+        cfg.duckdb_memory_limit = v.clone();
+    }
+    if let Some(v) = cli.duckdb_threads {
+        cfg.duckdb_threads = v;
     }
 
     cfg.validate()?;
@@ -1101,9 +1165,8 @@ mod tests {
     #[test]
     fn validate_rejects_hot_attr_shadowing_builtin() {
         let mut cfg = base_valid_cfg();
-        cfg.hot_attributes.push(
-            HotAttribute::parse_shorthand("trace_id:varchar").unwrap(),
-        );
+        cfg.hot_attributes
+            .push(HotAttribute::parse_shorthand("trace_id:varchar").unwrap());
         let err = cfg.validate().unwrap_err();
         assert!(
             matches!(err, crate::Error::Config(_)),
@@ -1118,12 +1181,10 @@ mod tests {
     #[test]
     fn validate_rejects_duplicate_hot_attrs() {
         let mut cfg = base_valid_cfg();
-        cfg.hot_attributes.push(
-            HotAttribute::parse_shorthand("user_id:bigint").unwrap(),
-        );
-        cfg.hot_attributes.push(
-            HotAttribute::parse_shorthand("user_id:bigint").unwrap(),
-        );
+        cfg.hot_attributes
+            .push(HotAttribute::parse_shorthand("user_id:bigint").unwrap());
+        cfg.hot_attributes
+            .push(HotAttribute::parse_shorthand("user_id:bigint").unwrap());
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("defined twice"));
     }
@@ -1131,12 +1192,10 @@ mod tests {
     #[test]
     fn validate_accepts_non_reserved_hot_attrs() {
         let mut cfg = base_valid_cfg();
-        cfg.hot_attributes.push(
-            HotAttribute::parse_shorthand("user_id:bigint").unwrap(),
-        );
-        cfg.hot_attributes.push(
-            HotAttribute::parse_shorthand("env:varchar").unwrap(),
-        );
+        cfg.hot_attributes
+            .push(HotAttribute::parse_shorthand("user_id:bigint").unwrap());
+        cfg.hot_attributes
+            .push(HotAttribute::parse_shorthand("env:varchar").unwrap());
         cfg.validate().unwrap();
     }
 
@@ -1158,12 +1217,13 @@ mod tests {
     #[test]
     fn validate_rejects_drop_and_hot_overlap() {
         let mut cfg = base_valid_cfg();
-        cfg.hot_attributes.push(
-            HotAttribute::parse_shorthand("user_id:bigint").unwrap(),
-        );
+        cfg.hot_attributes
+            .push(HotAttribute::parse_shorthand("user_id:bigint").unwrap());
         cfg.drop_attributes.push("user_id".into());
         let err = cfg.validate().unwrap_err();
-        assert!(err.to_string().contains("both as a hot attribute and a drop attribute"));
+        assert!(err
+            .to_string()
+            .contains("both as a hot attribute and a drop attribute"));
     }
 
     #[test]
@@ -1178,8 +1238,14 @@ mod tests {
     fn validate_accepts_service_retention_rules() {
         let mut cfg = base_valid_cfg();
         cfg.service_retention = vec![
-            ServiceRetention { pattern: "audit_*".into(), days: 90 },
-            ServiceRetention { pattern: "debug_?".into(), days: 3 },
+            ServiceRetention {
+                pattern: "audit_*".into(),
+                days: 90,
+            },
+            ServiceRetention {
+                pattern: "debug_?".into(),
+                days: 3,
+            },
         ];
         cfg.validate().unwrap();
     }
@@ -1187,12 +1253,26 @@ mod tests {
     #[test]
     fn validate_rejects_bad_service_retention() {
         let mut cfg = base_valid_cfg();
-        cfg.service_retention = vec![ServiceRetention { pattern: "a/b".into(), days: 7 }];
-        assert!(cfg.validate().unwrap_err().to_string().contains("must not contain '/'"));
+        cfg.service_retention = vec![ServiceRetention {
+            pattern: "a/b".into(),
+            days: 7,
+        }];
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("must not contain '/'"));
 
         let mut cfg = base_valid_cfg();
-        cfg.service_retention = vec![ServiceRetention { pattern: "audit".into(), days: 0 }];
-        assert!(cfg.validate().unwrap_err().to_string().contains("days >= 1"));
+        cfg.service_retention = vec![ServiceRetention {
+            pattern: "audit".into(),
+            days: 0,
+        }];
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("days >= 1"));
     }
 
     #[test]
@@ -1207,16 +1287,49 @@ mod tests {
     }
 
     #[test]
+    fn duckdb_tuning_validation() {
+        // Defaults (empty limit, 0 threads) are always valid.
+        let mut cfg = base_valid_cfg();
+        cfg.validate().unwrap();
+
+        for good in ["512MB", "2GB", "1073741824", "1.5gb"] {
+            let mut cfg = base_valid_cfg();
+            cfg.duckdb_memory_limit = good.to_string();
+            cfg.duckdb_threads = 4;
+            cfg.validate()
+                .unwrap_or_else(|e| panic!("{good} should be valid: {e}"));
+        }
+
+        for bad in ["four gigabytes", "1QB", "-2GB", "'; DROP TABLE logs", "GB"] {
+            let mut cfg = base_valid_cfg();
+            cfg.duckdb_memory_limit = bad.to_string();
+            assert!(cfg.validate().is_err(), "{bad} should be rejected");
+        }
+
+        let mut cfg = base_valid_cfg();
+        cfg.duckdb_threads = 5000;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
     fn validate_rejects_bad_query_limits() {
         let mut cfg = base_valid_cfg();
-        cfg.service_query_limits
-            .push(ServiceQueryLimit { pattern: "a/b".into(), max_window_secs: 60 });
+        cfg.service_query_limits.push(ServiceQueryLimit {
+            pattern: "a/b".into(),
+            max_window_secs: 60,
+        });
         assert!(cfg.validate().unwrap_err().to_string().contains("no '/'"));
 
         let mut cfg = base_valid_cfg();
-        cfg.service_query_limits
-            .push(ServiceQueryLimit { pattern: "svc".into(), max_window_secs: 0 });
-        assert!(cfg.validate().unwrap_err().to_string().contains("max_window_secs >= 1"));
+        cfg.service_query_limits.push(ServiceQueryLimit {
+            pattern: "svc".into(),
+            max_window_secs: 0,
+        });
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("max_window_secs >= 1"));
     }
 
     #[test]

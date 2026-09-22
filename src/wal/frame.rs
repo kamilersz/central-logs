@@ -159,11 +159,7 @@ pub fn decode_frame(header_and_payload: &[u8]) -> Result<RawRecord> {
     if header_and_payload.len() < FRAME_HEADER_LEN {
         return Err(Error::WalTruncated(header_and_payload.len() as u64));
     }
-    let header = parse_header(
-        header_and_payload[..FRAME_HEADER_LEN]
-            .try_into()
-            .unwrap(),
-    );
+    let header = parse_header(header_and_payload[..FRAME_HEADER_LEN].try_into().unwrap());
     let payload = &header_and_payload[FRAME_HEADER_LEN..];
     if payload.len() != header.payload_len as usize {
         return Err(Error::WalTruncated(header_and_payload.len() as u64));

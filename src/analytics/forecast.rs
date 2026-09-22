@@ -168,16 +168,11 @@ pub fn forecast_series(req: &ForecastRequest) -> Result<ForecastResponse> {
         let fit = forecaster
             .fit(&y)
             .map_err(|e| crate::Error::invalid_input(format!("augurs ets fit failed: {e:?}")))?;
-        let forecast = fit
-            .predict(req.horizon, req.level)
-            .map_err(|e| crate::Error::invalid_input(format!("augurs ets predict failed: {e:?}")))?;
+        let forecast = fit.predict(req.horizon, req.level).map_err(|e| {
+            crate::Error::invalid_input(format!("augurs ets predict failed: {e:?}"))
+        })?;
         let (l, u) = split_intervals(&forecast);
-        (
-            forecast.point,
-            l,
-            u,
-            "ets(non-seasonal)".to_string(),
-        )
+        (forecast.point, l, u, "ets(non-seasonal)".to_string())
     } else {
         let model = MSTLModel::new(periods.clone(), EtsTrend);
         let fit = model
@@ -249,7 +244,11 @@ mod tests {
     fn seasonality_gates() {
         // 1-minute samples: daily = 1440, weekly = 10080.
         assert!(seasonal_periods(1000, 60).is_empty(), "under 2 days");
-        assert_eq!(seasonal_periods(1440 * 2, 60), vec![1440], "2 days: daily only");
+        assert_eq!(
+            seasonal_periods(1440 * 2, 60),
+            vec![1440],
+            "2 days: daily only"
+        );
         assert_eq!(
             seasonal_periods(10080 * 2, 60),
             vec![1440, 10080],
@@ -268,7 +267,11 @@ mod tests {
             interval_secs: 60,
             horizon: 4,
             level: 0.95,
-            start: Some(chrono::DateTime::parse_from_rfc3339("2026-09-15T00:00:00Z").unwrap().with_timezone(&Utc)),
+            start: Some(
+                chrono::DateTime::parse_from_rfc3339("2026-09-15T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+            ),
         };
         let resp = forecast_series(&req).unwrap();
         assert_eq!(resp.model, "ets(non-seasonal)");
@@ -304,7 +307,8 @@ mod tests {
         // A flat ETS would produce near-constant predictions; MSTL should
         // reproduce intraday variance comparable to the input's.
         let preds: Vec<f64> = resp.points.iter().map(|p| p.predicted).collect();
-        let span = preds.iter().cloned().fold(f64::MIN, f64::max) - preds.iter().cloned().fold(f64::MAX, f64::min);
+        let span = preds.iter().cloned().fold(f64::MIN, f64::max)
+            - preds.iter().cloned().fold(f64::MAX, f64::min);
         let input_span = 8.0; // the gaussian bump height
         assert!(
             span > input_span * 0.5,

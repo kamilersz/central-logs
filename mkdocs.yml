@@ -1,0 +1,112 @@
+# mkdocs config — read by Read the Docs (see .readthedocs.yaml).
+#
+# This is the *only* configuration file RTD needs to build the site: nav,
+# theme, and the markdown extensions. The actual prose lives under
+# docs/index.md and friends.
+site_name: central-logs
+site_description: >-
+  Self-hosted, single-node centralized logging platform — ingest, store,
+  query, dashboard, forecast, detect anomalies, error tracking, and
+  expose everything to AI agents over MCP.
+site_url: https://central-logs.readthedocs.io/
+
+docs_dir: docs
+
+# We don't ship a "latest" / "stable" split for now; central-logs is a
+# single moving binary. Uncomment + add a `versions:` block in
+# .readthedocs.yaml once a stable release branch is cut.
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+# mkdocs-material adds the right-rail TOC features (we enable
+# `toc.follow` and `navigation.indexes` above). The TOC depth + permalink
+# default in mkdocs-material covers what we need; an explicit `toc:`
+# block here was rejected by mkdocs 1.6.
+
+plugins:
+  - search
+
+# `llms.txt` lives next to the markdown under docs/ — mkdocs copies any
+# non-markdown file there to the site root unchanged, so it ends up
+# served at /llms.txt for LLM agents without an extra_files directive.
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - For AI agents: llms.md
+  - User Guide:
+      - Ingest:
+          - ingestion/index.md
+          - ingestion/http.md
+          - ingestion/otlp.md
+          - ingestion/syslog.md
+          - ingestion/sentry.md
+      - Query: query.md
+      - Dashboards: dashboards.md
+      - Alerts: alerts.md
+      - Error Tracking: ERROR_TRACKING.md
+      - AI features: ai.md
+  - Operator Guide:
+      - Install & deploy: install.md
+      - Configuration: CONFIGURATION.md
+      - Security: SECURITY.md
+      - Operations: OPERATIONS.md
+  - Reference:
+      - HTTP API: API.md
+      - MCP tools: mcp.md
+      - CLI flags: reference/cli.md
+      - Config reference: reference/config.md
+      - LLM providers: reference/llm-providers.md
+      - Architecture: ARCHITECTURE.md
+      - Project status: STATUS.md
+  - Development: DEVELOPMENT.md
+  - Features: FEATURES.md
+  - Integration: INTEGRATION.md
+  - Integration samples: integration-sample/README.md
+  - Quick integrate: integrate.md

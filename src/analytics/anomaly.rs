@@ -185,7 +185,9 @@ mod tests {
         let now = Utc::now();
         let mut series: Vec<f64> = (0..60).map(|_| 10.0).collect();
         series.push(500.0);
-        let ts: Vec<_> = (0..61).map(|i| now - chrono::Duration::seconds((60 - i) as i64)).collect();
+        let ts: Vec<_> = (0..61)
+            .map(|i| now - chrono::Duration::seconds((60 - i) as i64))
+            .collect();
         let anomalies = detect_anomalies_once("vol", &series, &ts, 3.0).unwrap();
         assert!(anomalies.iter().any(|a| a.method == AnomalyMethod::Mad));
     }

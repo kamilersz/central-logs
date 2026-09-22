@@ -22,6 +22,10 @@
 //!
 //! - Connectors: `AND` / `OR` (case-insensitive). Adjacent clauses combine
 //!   with implicit AND. AND binds tighter than OR.
+//! - Wildcards: in `:`/`=` values on text columns, `%` matches any run of
+//!   characters and `_` a single one — `message:"cp cp-tekab % success"` →
+//!   `message ILIKE ?` with `["%cp cp-tekab % success%"]` (substring match,
+//!   like `~`). Values without wildcards stay exact `=`/`!=`.
 //! - Parens: `(a OR b) AND c` groups explicitly.
 //! - Exclusion: a leading `-` negates a clause or group (`-service:x`,
 //!   `-(a OR b)`). Only position 0 counts — `user_id:-42` keeps `-42` as the
@@ -30,7 +34,8 @@
 //! Examples:
 //! - `service:api level:error` → `service = ? AND level = ?` with `["api","error"]`
 //! - `user_id:42` → `user_id = ?` with `["42"]` (cast to BIGINT by DuckDB)
-//! - `message:"connection refused"` → `message ILIKE ?` with `["%connection refused%"]`
+//! - `message:"connection refused"` → `message = ?` with `["connection refused"]`
+//! - `message:"cp cp-tekab % success"` → `message ILIKE ?` (`%` = wildcard)
 //! - `duration_ms>1000` → `duration_ms > ?` with `["1000"]`
 //! - `service:api timeout` → `service = ? AND message ILIKE ?` with `["api","%timeout%"]`
 //! - `service:api OR service:web` → `service = ? OR service = ?`
@@ -127,10 +132,7 @@ impl CompiledFilter {
     /// Render to a SQL WHERE-clause body (without the leading `WHERE`) and a
     /// parallel parameter vector. `columns` is the key whitelist (column name
     /// → DuckDB type); unknown keys cause an error.
-    pub fn to_sql(
-        &self,
-        columns: &ColumnWhitelist,
-    ) -> Result<(String, Vec<String>), FilterError> {
+    pub fn to_sql(&self, columns: &ColumnWhitelist) -> Result<(String, Vec<String>), FilterError> {
         let Some(root) = &self.root else {
             return Ok((String::new(), Vec::new()));
         };
@@ -235,8 +237,9 @@ fn render_clause(
             value,
             negated,
         } => {
-            let ty =
-                columns.get(key).ok_or_else(|| FilterError::UnknownColumn(key.clone()))?;
+            let ty = columns
+                .get(key)
+                .ok_or_else(|| FilterError::UnknownColumn(key.clone()))?;
             // Numeric operators (`>`, `<=`, etc.) require a numeric column;
             // the value must parse. We allow them on Bigint / Double hot
             // columns plus the raw_len column. The check uses the *original*
@@ -253,7 +256,22 @@ fn render_clause(
                 return Err(FilterError::LikeOnNonText(key.clone()));
             }
 
-            let sql_value = if *op == Op::Like {
+            // On text columns, a `:`/`=` value containing `%` (any run of
+            // characters) or `_` (exactly one) switches from exact `=` to a
+            // wildcard substring match — the value is wrapped in implicit
+            // `%…%` like `~`, so `message:"cp cp-tekab % success"` finds the
+            // phrase anywhere in the message. Plain ILIKE, no ESCAPE clause:
+            // DuckDB's LIKE-ESCAPE does not honor `\x` escape sequences (a
+            // pattern containing one matches nothing), so `\` is just a
+            // literal character and `%`/`_` cannot be escaped here.
+            let wildcard = matches!(op, Op::Eq | Op::Ne)
+                && ty.is_text()
+                && (value.contains('%') || value.contains('_'));
+
+            // `~` always wraps as a substring pattern; a wildcard `:`/`=`
+            // value does the same.
+            let like = *op == Op::Like || wildcard;
+            let sql_value = if like {
                 format!("%{value}%")
             } else {
                 value.clone()
@@ -278,6 +296,16 @@ fn render_clause(
                 }
             }
             params.push(sql_value);
+            if like {
+                // Negation semantics per op: `-~x` → NOT ILIKE; `!=` is
+                // already "does not match" so it maps to NOT ILIKE and the
+                // `-` prefix flips it back to ILIKE.
+                let not_like = match *op {
+                    Op::Ne => !*negated,
+                    _ => *negated,
+                };
+                return Ok(format!("{key} {} ?", sql_op(Op::Like, not_like)));
+            }
             Ok(format!("{key} {} ?", sql_op(*op, *negated)))
         }
     }
@@ -450,9 +478,7 @@ impl Parser {
     /// or negation) — used to detect implicit AND.
     fn at_atom_start(&self) -> bool {
         match self.peek() {
-            Some(Token::Word(w)) => {
-                !w.eq_ignore_ascii_case("and") && !w.eq_ignore_ascii_case("or")
-            }
+            Some(Token::Word(w)) => !w.eq_ignore_ascii_case("and") && !w.eq_ignore_ascii_case("or"),
             Some(Token::Quoted(_) | Token::LParen) => true,
             _ => false,
         }
@@ -499,11 +525,17 @@ impl Parser {
             // as a clean op flip (`service != ?`); only groups get NOT (…).
             return Ok(match inner {
                 Expr::Term(Clause::Comparison { key, op, value, .. }) => {
-                    Expr::Term(Clause::Comparison { key, op, value, negated: true })
+                    Expr::Term(Clause::Comparison {
+                        key,
+                        op,
+                        value,
+                        negated: true,
+                    })
                 }
-                Expr::Term(Clause::TextSearch { text, .. }) => {
-                    Expr::Term(Clause::TextSearch { text, negated: true })
-                }
+                Expr::Term(Clause::TextSearch { text, .. }) => Expr::Term(Clause::TextSearch {
+                    text,
+                    negated: true,
+                }),
                 other => Expr::Not(Box::new(other)),
             });
         }
@@ -526,18 +558,14 @@ impl Parser {
                 }
                 Ok(inner)
             }
-            Some(Token::Word(w)) if w.eq_ignore_ascii_case("and") => {
-                Err(FilterError::Syntax {
-                    pos: 0,
-                    msg: "unexpected AND".into(),
-                })
-            }
-            Some(Token::Word(w)) if w.eq_ignore_ascii_case("or") => {
-                Err(FilterError::Syntax {
-                    pos: 0,
-                    msg: "unexpected OR".into(),
-                })
-            }
+            Some(Token::Word(w)) if w.eq_ignore_ascii_case("and") => Err(FilterError::Syntax {
+                pos: 0,
+                msg: "unexpected AND".into(),
+            }),
+            Some(Token::Word(w)) if w.eq_ignore_ascii_case("or") => Err(FilterError::Syntax {
+                pos: 0,
+                msg: "unexpected OR".into(),
+            }),
             Some(Token::Word(w)) => {
                 let c = parse_word(w)?;
                 self.pos += 1;
@@ -623,7 +651,11 @@ fn tokenize(input: &str) -> Result<Vec<Token>, FilterError> {
             // Parens are structural — always their own tokens, even when
             // glued to a word (`(service:api OR service:web)`).
             flush_word(&mut out, &mut current, &mut current_start);
-            out.push(if c == '(' { Token::LParen } else { Token::RParen });
+            out.push(if c == '(' {
+                Token::LParen
+            } else {
+                Token::RParen
+            });
             continue;
         }
         if c == '"' {
@@ -840,7 +872,10 @@ mod tests {
         // contains spaces and won't tokenize as a single key. And even if they
         // wrote `evil:bar`, the whitelist check rejects unknown keys.
         let f = parse_filter("evil:bar").unwrap();
-        assert!(matches!(f.to_sql(&whitelist()), Err(FilterError::UnknownColumn(_))));
+        assert!(matches!(
+            f.to_sql(&whitelist()),
+            Err(FilterError::UnknownColumn(_))
+        ));
     }
 
     #[test]
@@ -891,6 +926,75 @@ mod tests {
                 "42".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn quoted_value_with_percent_wildcard() {
+        // `%` in a `:` value on a text column switches to a wildcard
+        // substring ILIKE (implicit %…% wrapping, like `~`).
+        let f = parse_filter(r#"message:"cp cp-tekab % success""#).unwrap();
+        let (sql, params) = f.to_sql(&whitelist()).unwrap();
+        assert_eq!(sql, "message ILIKE ?");
+        assert_eq!(params, vec!["%cp cp-tekab % success%".to_string()]);
+    }
+
+    #[test]
+    fn wildcard_underscore_single_char() {
+        let f = parse_filter("service:web-0_1").unwrap();
+        let (sql, params) = f.to_sql(&whitelist()).unwrap();
+        assert_eq!(sql, "service ILIKE ?");
+        assert_eq!(params, vec!["%web-0_1%".to_string()]);
+    }
+
+    #[test]
+    fn wildcard_negated() {
+        let f = parse_filter(r#"-message:"cp % success""#).unwrap();
+        let (sql, params) = f.to_sql(&whitelist()).unwrap();
+        assert_eq!(sql, "message NOT ILIKE ?");
+        assert_eq!(params, vec!["%cp % success%".to_string()]);
+    }
+
+    #[test]
+    fn wildcard_ne_operator() {
+        let f = parse_filter(r#"message!="cp %""#).unwrap();
+        let (sql, params) = f.to_sql(&whitelist()).unwrap();
+        assert_eq!(sql, "message NOT ILIKE ?");
+        assert_eq!(params, vec!["%cp %%".to_string()]);
+    }
+
+    #[test]
+    fn ne_negated_with_wildcard_is_positive_ilike() {
+        let f = parse_filter(r#"-message!="cp %""#).unwrap();
+        let (sql, _) = f.to_sql(&whitelist()).unwrap();
+        assert_eq!(sql, "message ILIKE ?");
+    }
+
+    #[test]
+    fn wildcard_backslash_stays_literal() {
+        // No ESCAPE clause (DuckDB's LIKE-ESCAPE breaks on `\x` patterns),
+        // so a `\` in the value is matched literally, not as an escape.
+        let f = parse_filter(r#"message:"100\% done""#).unwrap();
+        let (sql, params) = f.to_sql(&whitelist()).unwrap();
+        assert_eq!(sql, "message ILIKE ?");
+        assert_eq!(params, vec!["%100\\% done%".to_string()]);
+    }
+
+    #[test]
+    fn wildcard_applies_to_quoted_values_with_spaces() {
+        // Contains `%`, so wildcard mode — even though the value is quoted
+        // with spaces (quoting alone would otherwise be exact `=`).
+        let f = parse_filter(r#"message:"connection 100%""#).unwrap();
+        let (sql, _) = f.to_sql(&whitelist()).unwrap();
+        assert_eq!(sql, "message ILIKE ?");
+    }
+
+    #[test]
+    fn wildcard_only_applies_to_text_columns() {
+        // user_id is BIGINT; a wildcard value fails the numeric parse check
+        // rather than silently becoming ILIKE.
+        let f = parse_filter(r#"user_id:"42%""#).unwrap();
+        let err = f.to_sql(&whitelist()).unwrap_err();
+        assert!(matches!(err, FilterError::ValueParseError { .. }));
     }
 
     #[test]
@@ -957,10 +1061,12 @@ mod tests {
 
     #[test]
     fn nested_parens() {
-        let f =
-            parse_filter("((service:api OR service:web) OR service:db) -level:debug").unwrap();
+        let f = parse_filter("((service:api OR service:web) OR service:db) -level:debug").unwrap();
         let (sql, _) = f.to_sql(&whitelist()).unwrap();
-        assert_eq!(sql, "(service = ? OR service = ? OR service = ?) AND level != ?");
+        assert_eq!(
+            sql,
+            "(service = ? OR service = ? OR service = ?) AND level != ?"
+        );
     }
 
     #[test]
@@ -999,7 +1105,10 @@ mod tests {
         let f = parse_filter("level:error -service:central-logs").unwrap();
         let (sql, params) = f.to_sql(&whitelist()).unwrap();
         assert_eq!(sql, "level = ? AND service != ?");
-        assert_eq!(params, vec!["error".to_string(), "central-logs".to_string()]);
+        assert_eq!(
+            params,
+            vec!["error".to_string(), "central-logs".to_string()]
+        );
     }
 
     #[test]
@@ -1049,11 +1158,12 @@ mod tests {
         let pinned: Vec<&str> = terms
             .iter()
             .filter_map(|c| match c {
-                Clause::Comparison { key, op: Op::Eq, value, negated: false }
-                    if key == "service" =>
-                {
-                    Some(value.as_str())
-                }
+                Clause::Comparison {
+                    key,
+                    op: Op::Eq,
+                    value,
+                    negated: false,
+                } if key == "service" => Some(value.as_str()),
                 _ => None,
             })
             .collect();

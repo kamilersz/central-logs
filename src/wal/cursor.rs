@@ -2,15 +2,26 @@
 //!
 //! Ingest workers use a [`TailCursor`] to read frames from where they last
 //! stopped, advancing through the segment files in order.
+//!
+//! The reader is buffered (`BufReader`, 512KB): unbuffered per-frame
+//! `tokio::fs::File` reads dispatch through `spawn_blocking`, and two
+//! round-trips per ~250-byte frame made ingest CPU-bound on read scheduling
+//! instead of parse/insert. Frames are decoded straight out of the internal
+//! buffer; only frames that straddle a buffer refill take the slow path.
 
+use std::future::Future;
 use std::path::PathBuf;
 
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
 
 use crate::wal::frame::{decode_frame, parse_header, FRAME_HEADER_LEN, MAX_PAYLOAD_LEN};
 use crate::wal::meta::Checkpoint;
 use crate::wal::segment::{segment_filename, SegmentRotator};
 use crate::{Error, RawRecord, Result};
+
+/// Internal read-buffer capacity. Frames larger than this take a slower
+/// chunked path (rare: typical frames are a few hundred bytes).
+const READ_BUF: usize = 512 * 1024;
 
 /// One read step's outcome.
 pub enum TailEntry {
@@ -26,8 +37,8 @@ pub enum TailEntry {
 pub struct TailCursor {
     base_dir: PathBuf,
     pos: Checkpoint,
-    /// Open file for the current segment, plus its id (to detect rotation).
-    open: Option<(u64, tokio::fs::File)>,
+    /// Buffered reader for the current segment, plus its id (rotation detect).
+    open: Option<(u64, tokio::io::BufReader<tokio::fs::File>)>,
 }
 
 impl TailCursor {
@@ -50,6 +61,23 @@ impl TailCursor {
             .unwrap_or(0)
     }
 
+    fn open_segment(&mut self) -> impl Future<Output = Result<bool>> + Send + '_ {
+        async move {
+            let path = self.base_dir.join(segment_filename(self.pos.segment_id));
+            if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+                return Ok(false);
+            }
+            let file = tokio::fs::OpenOptions::new().read(true).open(&path).await?;
+            let mut rdr = tokio::io::BufReader::with_capacity(READ_BUF, file);
+            if self.pos.byte_offset > 0 {
+                rdr.seek(std::io::SeekFrom::Start(self.pos.byte_offset))
+                    .await?;
+            }
+            self.open = Some((self.pos.segment_id, rdr));
+            Ok(true)
+        }
+    }
+
     /// Attempt to read the next available record. Returns [`TailEntry::CaughtUp`]
     /// when there is nothing to read right now.
     pub async fn next(&mut self) -> Result<TailEntry> {
@@ -59,87 +87,144 @@ impl TailCursor {
                 None => true,
                 Some((id, _)) => *id != self.pos.segment_id,
             };
-            if need_reopen {
-                let path = self.base_dir.join(segment_filename(self.pos.segment_id));
-                if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
-                    // Segment doesn't exist yet.
-                    return Ok(TailEntry::CaughtUp { next: self.pos });
-                }
-                let mut file = tokio::fs::OpenOptions::new().read(true).open(&path).await?;
-                file.seek(std::io::SeekFrom::Start(self.pos.byte_offset)).await?;
-                self.open = Some((self.pos.segment_id, file));
-            }
-
-            let (_, file) = self.open.as_mut().expect("file open");
-            // Read header.
-            let mut header_buf = [0u8; FRAME_HEADER_LEN];
-            match file.read(&mut header_buf[..]).await? {
-                0 => {
-                    // End of current segment file. Are there more segments?
-                    let writer_seg = self.writer_segment_id();
-                    if self.pos.segment_id < writer_seg {
-                        // Advance to next segment.
-                        self.pos = Checkpoint {
-                            segment_id: self.pos.segment_id + 1,
-                            byte_offset: 0,
-                        };
-                        self.open = None;
-                        continue;
-                    }
-                    return Ok(TailEntry::CaughtUp { next: self.pos });
-                }
-                n if n < FRAME_HEADER_LEN => {
-                    // Partial header — treat as caught up; the writer may be
-                    // mid-write. (Group-commit writes whole frames in one call,
-                    // so a partial header means a torn read at the boundary.)
-                    let (_, file) = self.open.as_mut().unwrap();
-                    file.seek(std::io::SeekFrom::Current(-(n as i64))).await?;
-                    return Ok(TailEntry::CaughtUp { next: self.pos });
-                }
-                _ => {}
-            }
-
-            let header = parse_header(&header_buf);
-            let payload_len = header.payload_len as usize;
-            if payload_len > MAX_PAYLOAD_LEN {
-                // Skip past this frame to avoid infinite loop.
-                let next = Checkpoint {
-                    segment_id: self.pos.segment_id,
-                    byte_offset: self.pos.byte_offset + FRAME_HEADER_LEN as u64 + payload_len as u64,
-                };
-                self.pos = next;
-                return Ok(TailEntry::BadFrame {
-                    error: Error::invalid_input(format!(
-                        "frame payload_len {payload_len} exceeds max"
-                    )),
-                    next,
-                });
-            }
-
-            let mut payload = vec![0u8; payload_len];
-            let read = file.read(&mut payload[..]).await?;
-            if read < payload_len {
-                // Torn read — rewind so we re-read it next time.
-                let rewind = read + FRAME_HEADER_LEN;
-                let (_, file) = self.open.as_mut().unwrap();
-                file.seek(std::io::SeekFrom::Current(-(rewind as i64))).await?;
+            if need_reopen && !self.open_segment().await? {
+                // Segment doesn't exist yet.
                 return Ok(TailEntry::CaughtUp { next: self.pos });
             }
 
-            // Stitch header + payload for decode_frame.
-            let mut frame = Vec::with_capacity(FRAME_HEADER_LEN + payload_len);
-            frame.extend_from_slice(&header_buf);
-            frame.extend_from_slice(&payload);
-            let advance = frame.len() as u64;
-            let next = Checkpoint {
-                segment_id: self.pos.segment_id,
-                byte_offset: self.pos.byte_offset + advance,
+            // --- Fast path: whole frame already inside the buffer. ---
+            let fast = {
+                let rdr = self.open.as_mut().expect("cursor reader open");
+                let buffered = rdr.1.fill_buf().await?;
+                if buffered.is_empty() {
+                    None
+                } else if buffered.len() >= FRAME_HEADER_LEN {
+                    let arr = buffered
+                        .first_chunk::<FRAME_HEADER_LEN>()
+                        .expect("len checked");
+                    let h = parse_header(arr);
+                    let want = FRAME_HEADER_LEN + h.payload_len as usize;
+                    if buffered.len() >= want {
+                        Some((want, decode_frame(&buffered[..want])))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             };
-            self.pos = next;
-            return Ok(match decode_frame(&frame) {
-                Ok(rec) => TailEntry::Record { rec, next },
-                Err(e) => TailEntry::BadFrame { error: e, next },
-            });
+            match fast {
+                None => {}
+                Some((want, Ok(rec))) => {
+                    self.open.as_mut().unwrap().1.consume(want);
+                    self.pos.byte_offset += want as u64;
+                    return Ok(TailEntry::Record {
+                        rec,
+                        next: self.pos,
+                    });
+                }
+                Some((want, Err(e))) => {
+                    self.open.as_mut().unwrap().1.consume(want);
+                    self.pos.byte_offset += want as u64;
+                    return Ok(TailEntry::BadFrame {
+                        error: e,
+                        next: self.pos,
+                    });
+                }
+            }
+
+            let is_eof = {
+                let rdr = self.open.as_mut().expect("cursor reader open");
+                rdr.1.fill_buf().await?.is_empty()
+            };
+            if is_eof {
+                // True EOF for this segment file: advance or wait.
+                if self.pos.segment_id < self.writer_segment_id() {
+                    self.pos = Checkpoint {
+                        segment_id: self.pos.segment_id + 1,
+                        byte_offset: 0,
+                    };
+                    self.open = None;
+                    continue;
+                }
+                return Ok(TailEntry::CaughtUp { next: self.pos });
+            }
+
+            // --- Slow path: frame straddles the buffer boundary. ---
+            // Assemble it across refills, consuming EXACTLY the frame's
+            // bytes (over-consuming would drop the next frames' bytes and
+            // desync the cursor). `pos` only advances once the full frame
+            // is decoded; on a torn tail we drop the reader so the next
+            // call reopens at `pos` and re-reads the partial frame.
+            let mut frame: Vec<u8> = Vec::with_capacity(64 * 1024);
+            let mut want: Option<usize> = None;
+            let torn = loop {
+                // Bytes still needed: 8 for the header, then the payload.
+                let need = match want {
+                    Some(w) => w - frame.len(),
+                    None => FRAME_HEADER_LEN - frame.len(),
+                };
+                let got = {
+                    let rdr = self.open.as_mut().expect("cursor reader open");
+                    let available = rdr.1.fill_buf().await?;
+                    if available.is_empty() {
+                        break true; // EOF mid-frame: torn tail
+                    }
+                    let take = need.min(available.len());
+                    frame.extend_from_slice(&available[..take]);
+                    take
+                };
+                rdr_consume(self.open.as_mut().expect("open"), got);
+                if want.is_none() && frame.len() >= FRAME_HEADER_LEN {
+                    let arr = frame
+                        .first_chunk::<FRAME_HEADER_LEN>()
+                        .expect("len checked");
+                    let h = parse_header(arr);
+                    let payload = h.payload_len as usize;
+                    if payload > MAX_PAYLOAD_LEN {
+                        // Bogus frame — skip past it.
+                        self.pos.byte_offset += FRAME_HEADER_LEN as u64 + payload as u64;
+                        self.open = None;
+                        return Ok(TailEntry::BadFrame {
+                            error: Error::invalid_input(format!(
+                                "frame payload_len {payload} exceeds max"
+                            )),
+                            next: self.pos,
+                        });
+                    }
+                    want = Some(FRAME_HEADER_LEN + payload);
+                }
+                if let Some(w) = want {
+                    if frame.len() >= w {
+                        break false; // complete
+                    }
+                }
+            };
+
+            if !torn {
+                let w = want.expect("complete implies want");
+                return match decode_frame(&frame[..w]) {
+                    Ok(rec) => {
+                        self.pos.byte_offset += w as u64;
+                        Ok(TailEntry::Record {
+                            rec,
+                            next: self.pos,
+                        })
+                    }
+                    Err(e) => {
+                        self.pos.byte_offset += w as u64;
+                        Ok(TailEntry::BadFrame {
+                            error: e,
+                            next: self.pos,
+                        })
+                    }
+                };
+            }
+
+            // Torn tail: writer is mid-write. Drop the reader so the next
+            // call reopens at `pos` and re-reads the partial frame.
+            self.open = None;
+            return Ok(TailEntry::CaughtUp { next: self.pos });
         }
     }
 
@@ -148,4 +233,8 @@ impl TailCursor {
         self.pos = pos;
         self.open = None;
     }
+}
+
+fn rdr_consume(open: &mut (u64, tokio::io::BufReader<tokio::fs::File>), n: usize) {
+    open.1.consume(n);
 }

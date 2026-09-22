@@ -1,5 +1,12 @@
 # Example config: copy to central-logs.toml and pass --config central-logs.toml
 
+# DuckDB engine resource limits (empty/0 = auto: ~80% RAM, one thread/core).
+# Cap these when the process shares a box with other services, or when a
+# heavy query/compaction should never squeeze out the ingest path.
+# Also settable via --duckdb-memory-limit / --duckdb-threads.
+# duckdb_memory_limit = "2GB"
+# duckdb_threads = 4
+
 [retention]
 hot_max_age = "2mo"        # hot tier bound (overrides hot_tier_hours)
 # hot_max_bytes = "10GB"   # size-based hot cap (whichever fires first)

@@ -9,6 +9,12 @@ agents over MCP — with a built-in SPA dashboard.
 One Rust binary. One DuckDB file. One WAL directory. No cluster, no external
 database, no container required.
 
+> **Documentation site**: <https://central-logs.readthedocs.io/>
+> (built from `docs/`; this README and `INTEGRATION.md` are kept at the
+> repo root for convenience and stay close to the code). For LLM/agent
+> discovery, the docs site serves a short `llms.txt` at
+> `/llms.txt`.
+
 ## Install
 
 No manual setup needed — let your coding agent do it.
@@ -68,18 +74,30 @@ source → insert layer → WAL (CRC-framed, fsync'd) → ingest workers → Duc
 
 ## Documentation
 
-| Doc | Contents |
+The full documentation is published at
+<https://central-logs.readthedocs.io/>. Highlights:
+
+| Page | Contents |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full design: schema, pipeline, rationale, roadmap |
-| [docs/FEATURES.md](docs/FEATURES.md) | The full feature list |
+| [docs/index.md](docs/index.md) | Site landing — high-level overview and section map |
+| [docs/getting-started.md](docs/getting-started.md) | Ten-minute quickstart (build, ship, query) |
+| [docs/llms.md](docs/llms.md) / [docs/llms.txt](docs/llms.txt) | For AI agents — recipe + discovery file |
+| [docs/API.md](docs/API.md) | HTTP API reference, filter DSL, MCP tools |
+| [docs/mcp.md](docs/mcp.md) | MCP server: tools, transport, agent recipes |
+| [docs/query.md](docs/query.md) | Filter DSL reference (operators, examples, safety) |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | CLI flags, env vars, TOML, LLM providers |
 | [docs/SECURITY.md](docs/SECURITY.md) | Auth, API keys, scopes, OWASP-aligned defaults |
-| [docs/API.md](docs/API.md) | HTTP API reference, filter DSL, MCP tools |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | systemd service, day-to-day ops, shipper sidecar, backup |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Dev workflow, builds, tests, project layout |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full design: schema, pipeline, rationale, roadmap |
 | [docs/STATUS.md](docs/STATUS.md) | What's done and tested, what's deferred |
-| [docs/ERROR_TRACKING.md](docs/ERROR_TRACKING.md) | Sentry-SDK-compatible error tracking: DSN setup, grouping, API, notifications |
+| [docs/ERROR_TRACKING.md](docs/ERROR_TRACKING.md) | Sentry-SDK-compatible error tracking |
 | [integration-sample/](integration-sample/README.md) | Ready-made insert clients per language |
+
+The Read the Docs build is configured by
+[`.readthedocs.yaml`](.readthedocs.yaml) +
+[`mkdocs.yml`](mkdocs.yml). To preview locally: `pip install -r
+requirements.txt && mkdocs serve`.
 
 ## License
 

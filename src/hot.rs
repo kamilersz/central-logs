@@ -76,9 +76,7 @@ impl HotAttribute {
             other => return Err(format!("unknown hot type: {other}")),
         };
         // Sanity-check the column name to prevent SQL injection via DDL.
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             || name.is_empty()
             || name.chars().next().unwrap().is_ascii_digit()
         {
@@ -245,8 +243,14 @@ mod tests {
 
     #[test]
     fn coerce_string_to_bool() {
-        assert_eq!(coerce(&json!("true"), HotType::Boolean), HotValue::Boolean(true));
-        assert_eq!(coerce(&json!("no"), HotType::Boolean), HotValue::Boolean(false));
+        assert_eq!(
+            coerce(&json!("true"), HotType::Boolean),
+            HotValue::Boolean(true)
+        );
+        assert_eq!(
+            coerce(&json!("no"), HotType::Boolean),
+            HotValue::Boolean(false)
+        );
         assert_eq!(coerce(&json!("maybe"), HotType::Boolean), HotValue::Null);
     }
 }

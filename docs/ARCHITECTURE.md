@@ -4,7 +4,7 @@ A self-hosted, single-node centralized logging platform: a Graylog-style alterna
 
 This document is the architecture reference for building v1. It is deliberately concrete (schema DDL, crate names, module layout) so a future implementation session can start coding directly from it rather than re-deriving decisions.
 
-**Status**: phases 1–3 of §9 are substantially built, not just planned — see the README's [Status](../README.md#status) section for the current done/deferred split, and §12–§13 below for two things (AI natural-language query, the auth/session system) that were built beyond what this document originally scoped. Where this doc and the code disagree, the code wins; sections below have been updated as they were confirmed against the current implementation, but this file is a design reference, not generated from the source — treat "planned" language in §1–§11 as historical intent unless a section explicitly says otherwise.
+**Status**: phases 1–3 of §9 are substantially built, not just planned — see the README's [Status](https://github.com/kamilersz/central-logs#status) section for the current done/deferred split, and §12–§13 below for two things (AI natural-language query, the auth/session system) that were built beyond what this document originally scoped. Where this doc and the code disagree, the code wins; sections below have been updated as they were confirmed against the current implementation, but this file is a design reference, not generated from the source — treat "planned" language in §1–§11 as historical intent unless a section explicitly says otherwise.
 
 ## Locked-in constraints
 

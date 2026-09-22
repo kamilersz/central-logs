@@ -18,7 +18,7 @@ use central_logs::insert::http::{router as http_router, InsertState};
 use central_logs::insert::syslog::{spawn_syslog_listeners, SyslogState};
 use central_logs::store::compact::spawn_compaction_task;
 use central_logs::store::rollup::{spawn_rollup_task, RollupConfig};
-use central_logs::store::Store;
+use central_logs::store::{DuckDbTuning, Store};
 use central_logs::wal::meta::WalMeta;
 use central_logs::wal::writer::WalWriter;
 
@@ -46,10 +46,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     if cli.print_config {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&cfg).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string_pretty(&cfg).unwrap_or_default());
         return Ok(());
     }
 
@@ -62,10 +59,7 @@ async fn main() -> anyhow::Result<()> {
     // Runs BEFORE the store opens: extracts the archive into the data dir
     // and lets normal startup proceed against it. See docs/OPERATIONS.md.
     if let Some(from) = cli.restore_from.as_deref() {
-        let data_dir = cli
-            .data_dir
-            .clone()
-            .unwrap_or_else(|| cfg.data_dir.clone());
+        let data_dir = cli.data_dir.clone().unwrap_or_else(|| cfg.data_dir.clone());
         let target = data_dir.clone();
         if target.exists() {
             let is_empty = std::fs::read_dir(&target)
@@ -86,12 +80,9 @@ async fn main() -> anyhow::Result<()> {
         }
         tracing::warn!(from, into = %target.display(), "restoring snapshot before boot");
         let remote = backup_remote(&cfg.backup);
-        let summary = tokio::runtime::Handle::current()
-            .block_on(central_logs::store::backup::restore_snapshot(
-                from,
-                &target,
-                remote,
-            ))?;
+        let summary = tokio::runtime::Handle::current().block_on(
+            central_logs::store::backup::restore_snapshot(from, &target, remote),
+        )?;
         tracing::info!(
             checksum = %summary.checksum,
             rows = summary.manifest.hot_rows,
@@ -99,8 +90,24 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let store = Store::open(&cfg.duckdb_path, cfg.parquet_dir.clone(), cfg.hot_attributes.clone())
-        .context("opening DuckDB store")?;
+    let duckdb_tuning = DuckDbTuning {
+        memory_limit: cfg.duckdb_memory_limit.clone(),
+        threads: cfg.duckdb_threads,
+    };
+    if !duckdb_tuning.memory_limit.is_empty() || duckdb_tuning.threads > 0 {
+        tracing::info!(
+            memory_limit = %cfg.duckdb_memory_limit,
+            threads = cfg.duckdb_threads,
+            "applying duckdb resource limits"
+        );
+    }
+    let store = Store::open_with(
+        &cfg.duckdb_path,
+        cfg.parquet_dir.clone(),
+        cfg.hot_attributes.clone(),
+        &duckdb_tuning,
+    )
+    .context("opening DuckDB store")?;
     if !cfg.hot_attributes.is_empty() {
         tracing::info!(
             count = cfg.hot_attributes.len(),
@@ -284,11 +291,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // 3) Rollup + compaction jobs.
-    let _rollup = spawn_rollup_task(
-        store.conn(),
-        RollupConfig::default(),
-        cfg.rollup_interval(),
-    );
+    let _rollup = spawn_rollup_task(store.conn(), RollupConfig::default(), cfg.rollup_interval());
 
     let _compaction = spawn_compaction_task(
         store.conn(),
@@ -378,8 +381,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             // Local dir exists even when disabled (manual backups use it).
             let _ = tokio::fs::create_dir_all(central_logs::store::backup::local_backup_dir(
-                &bcfg,
-                &bdata,
+                &bcfg, &bdata,
             ))
             .await;
             if !bcfg.enabled {
@@ -555,15 +557,14 @@ async fn main() -> anyhow::Result<()> {
 
         // Sentry-SDK-compatible ingest: /api/{project}/envelope[/] and
         // /api/{project}/store[/] (error tracking, docs/ERROR_TRACKING.md).
-        let sentry_r = central_logs::web::sentry_api::router(
-            central_logs::web::sentry_api::SentryState {
+        let sentry_r =
+            central_logs::web::sentry_api::router(central_logs::web::sentry_api::SentryState {
                 handle: handle.clone(),
                 counters: counters.clone(),
                 backpressure_timeout: cfg.insert_backpressure_timeout(),
                 cfg: cfg.error_tracking.clone(),
                 ingest_paused: ingest_paused.clone(),
-            },
-        );
+            });
 
         // SPA catch-all — serves the embedded React build (or a placeholder
         // if `web/dist` hasn't been built yet). Use `.nest` so the SPA's routes
@@ -622,7 +623,7 @@ async fn main() -> anyhow::Result<()> {
             // value (we know it's admin-scoped).
             keys.push(central_logs::web::auth::ApiKey {
                 id: 0, // not used for anything before the cache refresh; the
-                       // real id lives in DuckDB and is loaded on next boot.
+                // real id lives in DuckDB and is loaded on next boot.
                 name: "bootstrap-admin".into(),
                 key_hash: central_logs::web::auth::hash_token(raw),
                 key_prefix: central_logs::web::auth::token_display_prefix(raw),
@@ -638,11 +639,8 @@ async fn main() -> anyhow::Result<()> {
             Some(cfg.http_api_key.clone())
         };
         let static_admin_set = static_admin.is_some();
-        let auth_state = central_logs::web::auth::AuthState::with_store(
-            keys,
-            static_admin,
-            Some(store.clone()),
-        );
+        let auth_state =
+            central_logs::web::auth::AuthState::with_store(keys, static_admin, Some(store.clone()));
         let auth_enabled = auth_state.auth_enabled();
         if auth_enabled {
             tracing::info!(
@@ -715,13 +713,16 @@ async fn main() -> anyhow::Result<()> {
         // `into_make_connect_info()` populates the request's `ConnectInfo`
         // extension with the TCP peer, so handlers can resolve the client
         // IP for audit logging when no proxy header is present.
-        axum::serve(listener, http_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-            .with_graceful_shutdown(async move {
-                http_shutdown.cancelled().await;
-                tracing::info!("http server graceful shutdown triggered");
-            })
-            .await
-            .ok();
+        axum::serve(
+            listener,
+            http_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            http_shutdown.cancelled().await;
+            tracing::info!("http server graceful shutdown triggered");
+        })
+        .await
+        .ok();
     });
 
     // 5) Syslog listeners.
@@ -739,7 +740,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
-    let _syslog = spawn_syslog_listeners(syslog_udp, syslog_tcp, syslog_state, shutdown.clone()).await;
+    let _syslog =
+        spawn_syslog_listeners(syslog_udp, syslog_tcp, syslog_state, shutdown.clone()).await;
 
     // 6) MCP server (if enabled).
     #[cfg(feature = "mcp")]
@@ -759,7 +761,16 @@ async fn main() -> anyhow::Result<()> {
                 }
             })),
             McpMode::Sse => Some(tokio::spawn(async move {
-                if let Err(e) = spawn_mcp_sse(mcp_http_bind, mcp_api_key, store, meta, enable_alert_tool, shutdown).await {
+                if let Err(e) = spawn_mcp_sse(
+                    mcp_http_bind,
+                    mcp_api_key,
+                    store,
+                    meta,
+                    enable_alert_tool,
+                    shutdown,
+                )
+                .await
+                {
                     tracing::error!(?e, "SSE MCP server exited");
                 }
             })),
@@ -806,8 +817,11 @@ async fn main() -> anyhow::Result<()> {
             let _ = h.await;
         }
         #[cfg(feature = "mcp")]
-        if let Some(h) = mcp_handle { let _ = h.await; }
-    }).await;
+        if let Some(h) = mcp_handle {
+            let _ = h.await;
+        }
+    })
+    .await;
     if let Err(e) = store.checkpoint() {
         tracing::warn!(?e, "duckdb checkpoint on shutdown failed");
     }
@@ -825,7 +839,10 @@ fn run_anomaly_cycle(store: &Store) -> anyhow::Result<()> {
     )?;
     let pairs: Vec<(chrono::DateTime<chrono::Utc>, f64)> = stmt
         .query_map([], |row| {
-            Ok((row.get::<_, chrono::DateTime<chrono::Utc>>(0)?, row.get::<_, f64>(1)?))
+            Ok((
+                row.get::<_, chrono::DateTime<chrono::Utc>>(0)?,
+                row.get::<_, f64>(1)?,
+            ))
         })?
         .filter_map(Result::ok)
         .collect();
@@ -873,7 +890,9 @@ fn dir_size_bytes(dir: &std::path::Path) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {

@@ -296,7 +296,11 @@ pub async fn run_alert_cycle(
                 tracing::warn!(rule_id = alert.rule_id, channel = %channel_name, error = ?err, "alert notification failed");
             }
             if let Err(e) = record_alert_event(&conn, alert, channel_name, *ok, err.as_deref()) {
-                tracing::warn!(?e, rule_id = alert.rule_id, "alert cycle: record_alert_event failed");
+                tracing::warn!(
+                    ?e,
+                    rule_id = alert.rule_id,
+                    "alert cycle: record_alert_event failed"
+                );
             }
         }
         let _ = any_ok; // per-channel rows already carry notified/error
@@ -343,7 +347,9 @@ fn load_active_rules(conn: &Connection) -> Result<Vec<ActiveRule>> {
             id: r.get(0)?,
             name: r.get(1)?,
             metric: r.get(2)?,
-            condition_json: r.get::<_, Option<String>>(3)?.unwrap_or_else(|| "{}".into()),
+            condition_json: r
+                .get::<_, Option<String>>(3)?
+                .unwrap_or_else(|| "{}".into()),
             channel: r.get(4)?,
             channels_json: r.get(5)?,
             last_fired_at: r.get::<_, Option<chrono::DateTime<chrono::Utc>>>(6)?,
@@ -357,11 +363,7 @@ fn load_active_rules(conn: &Connection) -> Result<Vec<ActiveRule>> {
     Ok(out)
 }
 
-fn evaluate_rule(
-    conn: &Connection,
-    rule: &ActiveRule,
-    whitelist: &ColumnWhitelist,
-) -> EvalOutcome {
+fn evaluate_rule(conn: &Connection, rule: &ActiveRule, whitelist: &ColumnWhitelist) -> EvalOutcome {
     let cond: AlertCondition = match serde_json::from_str(&rule.condition_json) {
         Ok(c) => c,
         Err(e) => {
@@ -526,12 +528,7 @@ fn evaluate_rule(
         format!(
             "{} crossed '{}' threshold: {} {} {} over the last {window}s \
              (current: {:.3})",
-            rule.name,
-            current_sev,
-            subject,
-            entry.comparator,
-            entry.value,
-            observed
+            rule.name, current_sev, subject, entry.comparator, entry.value, observed
         )
     };
 
@@ -569,7 +566,10 @@ fn cond_anomaly_severity(cond: &AlertCondition) -> String {
     }
 }
 
-fn cooldown_elapsed(last_fired_at: Option<chrono::DateTime<chrono::Utc>>, cooldown_secs: i64) -> bool {
+fn cooldown_elapsed(
+    last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
+    cooldown_secs: i64,
+) -> bool {
     match last_fired_at {
         None => true,
         Some(t) => (chrono::Utc::now() - t).num_seconds() >= cooldown_secs.max(0),
@@ -617,8 +617,7 @@ fn count_matching(
     window_secs: i64,
     whitelist: &ColumnWhitelist,
 ) -> Result<f64> {
-    let compiled =
-        parse_filter(filter).map_err(|e| crate::Error::invalid_input(e.to_string()))?;
+    let compiled = parse_filter(filter).map_err(|e| crate::Error::invalid_input(e.to_string()))?;
     let (where_body, params) = compiled
         .to_sql(whitelist)
         .map_err(|e| crate::Error::invalid_input(e.to_string()))?;
@@ -646,17 +645,22 @@ fn count_matching(
 /// One resolved delivery target loaded from `alert_channels`.
 #[derive(Debug, Clone)]
 pub enum ChannelTarget {
-    Webhook { url: String },
-    Telegram { bot_token: String, chat_id: String, api_base: String },
-    Email { recipients: Vec<String> },
+    Webhook {
+        url: String,
+    },
+    Telegram {
+        bot_token: String,
+        chat_id: String,
+        api_base: String,
+    },
+    Email {
+        recipients: Vec<String>,
+    },
 }
 
 /// Load the named targets for `ids`. Unknown/deleted ids are skipped (with a
 /// warning) rather than failing the whole delivery.
-pub fn load_channel_targets(
-    conn: &Connection,
-    ids: &[i64],
-) -> Vec<(String, ChannelTarget)> {
+pub fn load_channel_targets(conn: &Connection, ids: &[i64]) -> Vec<(String, ChannelTarget)> {
     let mut out = Vec::new();
     for id in ids {
         let row = conn.query_row(
@@ -677,7 +681,8 @@ pub fn load_channel_targets(
                 continue;
             }
         };
-        let config: serde_json::Value = serde_json::from_str(&cfg).unwrap_or(serde_json::Value::Null);
+        let config: serde_json::Value =
+            serde_json::from_str(&cfg).unwrap_or(serde_json::Value::Null);
         let target = match ctype.as_str() {
             "webhook" => ChannelTarget::Webhook {
                 url: config["url"].as_str().unwrap_or_default().to_string(),
@@ -719,15 +724,18 @@ pub async fn deliver(
 ) -> (bool, Option<String>) {
     match target {
         ChannelTarget::Webhook { url } => {
-            let legacy = FiredAlert { channel: url.clone(), ..alert.clone() };
+            let legacy = FiredAlert {
+                channel: url.clone(),
+                ..alert.clone()
+            };
             send_webhook(http, &legacy).await
         }
-        ChannelTarget::Telegram { bot_token, chat_id, api_base } => {
-            send_telegram(http, bot_token, chat_id, api_base, alert).await
-        }
-        ChannelTarget::Email { recipients } => {
-            send_email(smtp, recipients, alert).await
-        }
+        ChannelTarget::Telegram {
+            bot_token,
+            chat_id,
+            api_base,
+        } => send_telegram(http, bot_token, chat_id, api_base, alert).await,
+        ChannelTarget::Email { recipients } => send_email(smtp, recipients, alert).await,
     }
 }
 
@@ -746,9 +754,17 @@ async fn send_telegram(
     alert: &FiredAlert,
 ) -> (bool, Option<String>) {
     if bot_token.trim().is_empty() || chat_id.trim().is_empty() {
-        return (false, Some("telegram channel missing bot_token or chat_id".into()));
+        return (
+            false,
+            Some("telegram channel missing bot_token or chat_id".into()),
+        );
     }
-    let url = format!("{}/bot{}/sendMessage", api_base.trim_end_matches('/'), bot_token);
+    let bot_token = bot_token.trim();
+    let url = format!(
+        "{}/bot{}/sendMessage",
+        api_base.trim_end_matches('/'),
+        bot_token
+    );
     let body = serde_json::json!({
         "chat_id": chat_id,
         "text": alert_text(alert),
@@ -763,6 +779,8 @@ async fn send_telegram(
                 " (chat not found — check chat_id; for groups the bot must be a member)"
             } else if text.contains("Unauthorized") {
                 " (unauthorized — check bot_token)"
+            } else if status == reqwest::StatusCode::NOT_FOUND {
+                " (not found — check bot_token/api_base; a bad token makes the URL path invalid)"
             } else {
                 ""
             };
@@ -813,7 +831,12 @@ fn send_email_blocking(
 
     let from = match cfg.from.parse::<Mailbox>() {
         Ok(m) => m,
-        Err(e) => return (false, Some(format!("invalid smtp from '{}': {e}", cfg.from))),
+        Err(e) => {
+            return (
+                false,
+                Some(format!("invalid smtp from '{}': {e}", cfg.from)),
+            )
+        }
     };
     let mut builder = Message::builder()
         .from(from)
@@ -826,7 +849,10 @@ fn send_email_blocking(
             }
         }
     }
-    let email = match builder.header(ContentType::TEXT_PLAIN).body(alert_text(alert)) {
+    let email = match builder
+        .header(ContentType::TEXT_PLAIN)
+        .body(alert_text(alert))
+    {
         Ok(e) => e,
         Err(e) => return (false, Some(format!("build email: {e}"))),
     };
@@ -886,7 +912,11 @@ fn resolve_metric(conn: &Connection, metric: &str, window_secs: i64) -> Result<O
                 [since],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            Ok(Some(if total > 0 { errs as f64 / total as f64 } else { 0.0 }))
+            Ok(Some(if total > 0 {
+                errs as f64 / total as f64
+            } else {
+                0.0
+            }))
         }
         "p50_latency" | "p95_latency" | "p99_latency" => {
             let col = match metric {
@@ -947,7 +977,10 @@ fn recent_anomaly_meets_severity(
 /// POST the firing payload to `alert.channel`. Only `http(s)://` URLs are
 /// deliverable in this version (see module docs) — anything else is reported
 /// as an error rather than attempted.
-pub(crate) async fn send_webhook(http: &reqwest::Client, alert: &FiredAlert) -> (bool, Option<String>) {
+pub(crate) async fn send_webhook(
+    http: &reqwest::Client,
+    alert: &FiredAlert,
+) -> (bool, Option<String>) {
     let channel = alert.channel.trim();
     if channel.is_empty() {
         return (false, Some("no notification channel configured".into()));
@@ -1002,7 +1035,11 @@ fn record_alert_event(
     )?;
     // Persist the new severity state. "ok" stores NULL so the next breach
     // from healthy is again a transition.
-    let stored_sev: Option<&str> = if alert.severity == "ok" { None } else { Some(&alert.severity) };
+    let stored_sev: Option<&str> = if alert.severity == "ok" {
+        None
+    } else {
+        Some(&alert.severity)
+    };
     tx.execute(
         "UPDATE alert_rules SET last_evaluated_at = CURRENT_TIMESTAMP, \
          last_fired_at = CURRENT_TIMESTAMP, last_notify_error = ?, last_severity = ? \
@@ -1052,7 +1089,12 @@ mod tests {
         (tmp, conn)
     }
 
-    fn insert_rule(conn: &Connection, metric: &str, condition: serde_json::Value, channel: &str) -> i64 {
+    fn insert_rule(
+        conn: &Connection,
+        metric: &str,
+        condition: serde_json::Value,
+        channel: &str,
+    ) -> i64 {
         // DuckDB has no `last_insert_rowid()`; pull the id from the sequence
         // explicitly, same fix as `mcp::tools::create_alert_rule`.
         let id: i64 = conn
@@ -1094,7 +1136,10 @@ mod tests {
                 assert_eq!(f.rule_id, id);
                 assert_eq!(f.value, 500.0);
             }
-            other => panic!("expected Fired, got {other:?}", other = debug_outcome(&other)),
+            other => panic!(
+                "expected Fired, got {other:?}",
+                other = debug_outcome(&other)
+            ),
         }
     }
 
@@ -1110,7 +1155,10 @@ mod tests {
         );
         let rule = &load_active_rules(&conn).unwrap()[0];
         let whitelist = ColumnWhitelist::standard(&[]);
-        assert!(matches!(evaluate_rule(&conn, rule, &whitelist), EvalOutcome::NotBreached { .. }));
+        assert!(matches!(
+            evaluate_rule(&conn, rule, &whitelist),
+            EvalOutcome::NotBreached { .. }
+        ));
     }
 
     #[test]
@@ -1159,7 +1207,10 @@ mod tests {
                 assert_eq!(f.severity, "ok");
                 assert!(f.message.contains("RECOVERED"));
             }
-            other => panic!("expected Fired(recovery), got {other:?}", other = debug_outcome(&other)),
+            other => panic!(
+                "expected Fired(recovery), got {other:?}",
+                other = debug_outcome(&other)
+            ),
         }
         let _ = id;
     }
@@ -1171,10 +1222,10 @@ mod tests {
             &conn,
             "volume",
             serde_json::json!({"type": "threshold", "comparator": ">", "value": 0.0,
-                "thresholds": [
-                    {"severity": "warning", "comparator": ">=", "value": 50.0},
-                    {"severity": "critical", "comparator": ">=", "value": 200.0}
-                ]}),
+            "thresholds": [
+                {"severity": "warning", "comparator": ">=", "value": 50.0},
+                {"severity": "critical", "comparator": ">=", "value": 200.0}
+            ]}),
             "https://hooks.example.com/x",
         );
         let whitelist = ColumnWhitelist::standard(&[]);
@@ -1238,7 +1289,10 @@ mod tests {
         let whitelist = ColumnWhitelist::standard(&[]);
         match evaluate_rule(&conn, rule, &whitelist) {
             EvalOutcome::Error { error, .. } => assert!(error.contains("unsupported metric")),
-            other => panic!("expected Error, got {other:?}", other = debug_outcome(&other)),
+            other => panic!(
+                "expected Error, got {other:?}",
+                other = debug_outcome(&other)
+            ),
         }
     }
 
@@ -1259,7 +1313,10 @@ mod tests {
         );
         let rule = &load_active_rules(&conn).unwrap()[0];
         let whitelist = ColumnWhitelist::standard(&[]);
-        assert!(matches!(evaluate_rule(&conn, rule, &whitelist), EvalOutcome::Fired(_)));
+        assert!(matches!(
+            evaluate_rule(&conn, rule, &whitelist),
+            EvalOutcome::Fired(_)
+        ));
     }
 
     #[test]
@@ -1279,16 +1336,27 @@ mod tests {
         );
         let rule = &load_active_rules(&conn).unwrap()[0];
         let whitelist = ColumnWhitelist::standard(&[]);
-        assert!(matches!(evaluate_rule(&conn, rule, &whitelist), EvalOutcome::NotBreached { .. }));
+        assert!(matches!(
+            evaluate_rule(&conn, rule, &whitelist),
+            EvalOutcome::NotBreached { .. }
+        ));
     }
 
     #[test]
     fn bad_condition_json_is_reported_not_panicked() {
         let (_tmp, conn) = test_conn();
-        let _id = insert_rule(&conn, "volume", serde_json::json!("not an object"), "https://x");
+        let _id = insert_rule(
+            &conn,
+            "volume",
+            serde_json::json!("not an object"),
+            "https://x",
+        );
         let rule = &load_active_rules(&conn).unwrap()[0];
         let whitelist = ColumnWhitelist::standard(&[]);
-        assert!(matches!(evaluate_rule(&conn, rule, &whitelist), EvalOutcome::Error { .. }));
+        assert!(matches!(
+            evaluate_rule(&conn, rule, &whitelist),
+            EvalOutcome::Error { .. }
+        ));
     }
 
     #[tokio::test]
@@ -1297,12 +1365,8 @@ mod tests {
         // Count evaluates the hot `logs` table — stand up a full Store in the
         // tempdir so the filter path runs against real schema.
         let parquet = tmp.path().join("parquet");
-        let store = crate::store::Store::open(
-            &tmp.path().join("t2.duckdb"),
-            parquet,
-            vec![],
-        )
-        .unwrap();
+        let store =
+            crate::store::Store::open(&tmp.path().join("t2.duckdb"), parquet, vec![]).unwrap();
         {
             let conn = store.lock();
             for _ in 0..5 {
@@ -1336,12 +1400,17 @@ mod tests {
             assert_eq!(rule.id, id);
             match evaluate_rule(&conn, &rule, &whitelist) {
                 EvalOutcome::Fired(f) => f,
-                other => panic!("expected Fired, got {other:?}", other = debug_outcome(&other)),
+                other => panic!(
+                    "expected Fired, got {other:?}",
+                    other = debug_outcome(&other)
+                ),
             }
         };
         assert_eq!(fired.value, 5.0);
         assert_eq!(fired.severity, "alert");
-        assert!(fired.message.contains("rows matching 'service:api level:error'"));
+        assert!(fired
+            .message
+            .contains("rows matching 'service:api level:error'"));
     }
 
     #[test]
@@ -1356,8 +1425,13 @@ mod tests {
         let rule = &load_active_rules(&conn).unwrap()[0];
         let whitelist = ColumnWhitelist::standard(&[]);
         match evaluate_rule(&conn, rule, &whitelist) {
-            EvalOutcome::Error { error, .. } => assert!(error.contains("invalid filter") || error.contains("unknown")),
-            other => panic!("expected Error, got {other:?}", other = debug_outcome(&other)),
+            EvalOutcome::Error { error, .. } => {
+                assert!(error.contains("invalid filter") || error.contains("unknown"))
+            }
+            other => panic!(
+                "expected Error, got {other:?}",
+                other = debug_outcome(&other)
+            ),
         }
     }
 

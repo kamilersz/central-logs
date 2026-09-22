@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo};
-use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt};
+use rmcp::{
+    schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -144,7 +146,9 @@ impl CentralLogsMcpServer {
         }
     }
 
-    #[tool(description = "Query raw log rows with optional SQL predicate and time range. Read-only.")]
+    #[tool(
+        description = "Query raw log rows with optional SQL predicate and time range. Read-only."
+    )]
     async fn query_logs(
         &self,
         Parameters(params): Parameters<QueryLogsParams>,
@@ -203,14 +207,16 @@ impl CentralLogsMcpServer {
         Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
-    #[tool(description = "Get a pre-digested dashboard summary for a metric over a time range. Read-only.")]
+    #[tool(
+        description = "Get a pre-digested dashboard summary for a metric over a time range. Read-only."
+    )]
     async fn get_dashboard_summary(
         &self,
         Parameters(params): Parameters<DashboardSummaryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let from = params.from.unwrap_or_else(|| {
-            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339()
-        });
+        let from = params
+            .from
+            .unwrap_or_else(|| (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
         let to = params.to.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
         let metric = params.metric;
 
@@ -275,7 +281,9 @@ impl CentralLogsMcpServer {
         Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
-    #[tool(description = "Detect anomalies in a metric series using rolling MAD, seasonal, and rate-of-change methods. Read-only.")]
+    #[tool(
+        description = "Detect anomalies in a metric series using rolling MAD, seasonal, and rate-of-change methods. Read-only."
+    )]
     async fn detect_anomalies(
         &self,
         Parameters(params): Parameters<DetectAnomaliesParams>,
@@ -325,9 +333,12 @@ impl CentralLogsMcpServer {
                 pairs.reverse();
                 pairs.into_iter().unzip()
             };
-            if let Ok(detected) =
-                crate::analytics::anomaly::detect_anomalies_once(&params.metric, &series, &ts, params.sensitivity)
-            {
+            if let Ok(detected) = crate::analytics::anomaly::detect_anomalies_once(
+                &params.metric,
+                &series,
+                &ts,
+                params.sensitivity,
+            ) {
                 for d in detected {
                     out.push(AnomalyOut {
                         ts: d.ts.to_rfc3339(),
@@ -346,7 +357,9 @@ impl CentralLogsMcpServer {
         Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
-    #[tool(description = "Forecast a metric series into the future using ETS/Holt-Winters. Read-only.")]
+    #[tool(
+        description = "Forecast a metric series into the future using ETS/Holt-Winters. Read-only."
+    )]
     async fn forecast(
         &self,
         Parameters(params): Parameters<ForecastToolParams>,
@@ -388,7 +401,9 @@ impl CentralLogsMcpServer {
         Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
-    #[tool(description = "Create an alert rule. Rules are created in pending_approval status and must be approved via the dashboard UI before they fire. Requires the --enable-alert-mcp-tool flag.")]
+    #[tool(
+        description = "Create an alert rule. Rules are created in pending_approval status and must be approved via the dashboard UI before they fire. Requires the --enable-alert-mcp-tool flag."
+    )]
     async fn create_alert_rule(
         &self,
         Parameters(params): Parameters<CreateAlertRuleParams>,
@@ -415,11 +430,17 @@ impl CentralLogsMcpServer {
         tx.execute(
             "INSERT INTO alert_rules (id, name, metric, condition_json, channel, status) \
              VALUES (?, ?, ?, ?, ?, 'pending_approval')",
-            params![id, &params.name, &params.metric, &cond, &params.notification_channel],
+            params![
+                id,
+                &params.name,
+                &params.metric,
+                &cond,
+                &params.notification_channel
+            ],
         )
         .map_err(|e| McpError::internal_error(format!("insert: {e}"), None))?;
         tx.commit()
-        .map_err(|e| McpError::internal_error(format!("commit: {e}"), None))?;
+            .map_err(|e| McpError::internal_error(format!("commit: {e}"), None))?;
         let result = CreateAlertRuleResult {
             rule_id: id,
             status: "pending_approval".into(),
@@ -432,16 +453,14 @@ impl CentralLogsMcpServer {
 
 fn parse_horizon_count(horizon: &str, granularity: Option<&str>) -> usize {
     // Parse "<number><unit>" like "6h", "30m", "2d".
-    let (num_str, unit) = horizon
-        .trim()
-        .split_at(
-            horizon
-                .char_indices()
-                .rev()
-                .find(|(_, c)| c.is_alphabetic())
-                .map(|(i, _)| i)
-                .unwrap_or(horizon.len()),
-        );
+    let (num_str, unit) = horizon.trim().split_at(
+        horizon
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_alphabetic())
+            .map(|(i, _)| i)
+            .unwrap_or(horizon.len()),
+    );
     let n: usize = num_str.parse().unwrap_or(6);
     let unit = unit.trim();
     let per_hour = match granularity {
@@ -459,7 +478,10 @@ fn parse_horizon_count(horizon: &str, granularity: Option<&str>) -> usize {
 
 /// Wire `ServerHandler` with our tool router. Custom server metadata to expose
 /// our name/version to clients.
-#[tool_handler(name = "central-logs", instructions = "central-logs MCP server. Tools: query_logs, get_dashboard_summary, detect_anomalies, forecast.")]
+#[tool_handler(
+    name = "central-logs",
+    instructions = "central-logs MCP server. Tools: query_logs, get_dashboard_summary, detect_anomalies, forecast."
+)]
 impl ServerHandler for CentralLogsMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())

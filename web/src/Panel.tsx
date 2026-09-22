@@ -3,8 +3,7 @@
 // endpoints, so a panel's filter is always applied server-side.
 
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
-import { usePoll, LineChart, toPoints, SeverityBadge } from "./components";
+import { usePoll, LineChart, toPoints, SeverityBadge, LogsExplorerLink } from "./components";
 import {
   api,
   type Panel,
@@ -17,9 +16,31 @@ import {
 
 const COLORS = ["#5b8dff", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 
+/** View-time replacement for a panel's saved period (dashboard viewer time
+ * selector). Only affects queries — never the stored dashboard definition. */
+export interface PeriodOverride {
+  window?: string;
+  from?: string;
+  to?: string;
+}
+
 /** Resolve a panel's period (relative window or custom from/to) into query
- * params for the dashboard endpoints. */
-function panelPeriod(p: Panel): { window?: string; from?: string; to?: string } {
+ * params for the dashboard endpoints. `override` (dashboard-viewer time
+ * selector) wins when set; otherwise the panel's own period is used. */
+function panelPeriod(
+  p: Panel,
+  override?: PeriodOverride,
+): { window?: string; from?: string; to?: string } {
+  if (override) {
+    if (override.window) return { window: override.window };
+    if (override.from && override.to) {
+      const f = new Date(override.from);
+      const t = new Date(override.to);
+      if (!Number.isNaN(f.getTime()) && !Number.isNaN(t.getTime()) && t > f) {
+        return { from: f.toISOString(), to: t.toISOString() };
+      }
+    }
+  }
   if (p.window === "custom" && p.from && p.to) {
     const f = new Date(p.from);
     const t = new Date(p.to);
@@ -31,11 +52,17 @@ function panelPeriod(p: Panel): { window?: string; from?: string; to?: string } 
   return { window: p.window || "1h" };
 }
 
-function panelParams(p: Panel) {
-  return { ...panelPeriod(p), filter: p.filter || undefined };
+function panelParams(p: Panel, override?: PeriodOverride) {
+  return { ...panelPeriod(p, override), filter: p.filter || undefined };
 }
 
-export function PanelView({ panel }: { panel: Panel }) {
+export function PanelView({
+  panel,
+  periodOverride,
+}: {
+  panel: Panel;
+  periodOverride?: PeriodOverride;
+}) {
   const viz = panel.viz === "number" ? "number" : "chart";
   const title = panel.title || panel.type;
   // 12-column grid width, clamped defensively (AI proposals are validated
@@ -48,15 +75,17 @@ export function PanelView({ panel }: { panel: Panel }) {
       style={{ gridColumn: `span ${w}` }}
     >
       {/* Title on its own line so it never wraps; meta (window · filter)
-          goes below, truncated with hover tooltip when long. */}
+          goes below, truncated with hover tooltip when long. The meta shows
+          the EFFECTIVE period (override applied), unlike the saved one. */}
       <h3 className="font-medium truncate" title={title}>
         {title}
       </h3>
       {(() => {
+        const eff = panelPeriod(panel, periodOverride);
         const period =
-          panel.window === "custom" && panel.from && panel.to
-            ? `${new Date(panel.from).toLocaleString()} → ${new Date(panel.to).toLocaleString()}`
-            : panel.window;
+          eff.from && eff.to
+            ? `${new Date(eff.from).toLocaleString()} → ${new Date(eff.to).toLocaleString()}`
+            : eff.window || "1h";
         const meta = panel.filter ? `${period} · ${panel.filter}` : period;
         const metaTitle = `${period}${panel.filter ? `\n${panel.filter}` : ""}`;
         return (
@@ -67,38 +96,44 @@ export function PanelView({ panel }: { panel: Panel }) {
             >
               {meta}
             </span>
-            {panel.filter && (
-              <Link
-                to={`/?filter=${encodeURIComponent(panel.filter)}&window=${encodeURIComponent(panel.window)}`}
-                className="text-xs text-tremor-brand dark:text-dark-tremor-brand hover:underline whitespace-nowrap"
-              >
-                open in logs →
-              </Link>
-            )}
+            <LogsExplorerLink
+              window={eff.from ? undefined : eff.window}
+              from={eff.from}
+              to={eff.to}
+              filter={panel.filter || undefined}
+            />
           </div>
         );
       })()}
       <div className="mt-2">
-        <PanelBody panel={panel} viz={viz} />
+        <PanelBody panel={panel} viz={viz} override={periodOverride} />
       </div>
     </div>
   );
 }
 
-function PanelBody({ panel, viz }: { panel: Panel; viz: "chart" | "number" }) {
+function PanelBody({
+  panel,
+  viz,
+  override,
+}: {
+  panel: Panel;
+  viz: "chart" | "number";
+  override?: PeriodOverride;
+}) {
   switch (panel.type) {
     case "volume":
-      return <VolumePanel panel={panel} viz={viz} />;
+      return <VolumePanel panel={panel} viz={viz} override={override} />;
     case "error-rate":
-      return <ErrorRatePanel panel={panel} viz={viz} />;
+      return <ErrorRatePanel panel={panel} viz={viz} override={override} />;
     case "latency":
-      return <LatencyPanel panel={panel} viz={viz} />;
+      return <LatencyPanel panel={panel} viz={viz} override={override} />;
     case "log-count":
-      return <LogCountPanel panel={panel} />;
+      return <LogCountPanel panel={panel} override={override} />;
     case "top-services":
-      return <TopServicesPanel panel={panel} />;
+      return <TopServicesPanel panel={panel} override={override} />;
     case "anomalies":
-      return <AnomaliesPanel panel={panel} viz={viz} />;
+      return <AnomaliesPanel panel={panel} viz={viz} override={override} />;
     default:
       return <div className="text-xs text-tremor-content-subtle">unknown panel type</div>;
   }
@@ -118,8 +153,16 @@ function Big({ value, sub }: { value: string; sub?: string }) {
   );
 }
 
-function VolumePanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" }) {
-  const params = panelParams(panel);
+function VolumePanel({
+  panel,
+  viz,
+  override,
+}: {
+  panel: Panel;
+  viz: "chart" | "number";
+  override?: PeriodOverride;
+}) {
+  const params = panelParams(panel, override);
   const vol = usePoll<VolumeRow[]>(() => api.volume(params), 30000, [JSON.stringify(params)]);
   const fc = usePoll<ForecastResponse | null>(
     async () => {
@@ -157,8 +200,16 @@ function VolumePanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" }) 
   );
 }
 
-function ErrorRatePanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" }) {
-  const params = panelParams(panel);
+function ErrorRatePanel({
+  panel,
+  viz,
+  override,
+}: {
+  panel: Panel;
+  viz: "chart" | "number";
+  override?: PeriodOverride;
+}) {
+  const params = panelParams(panel, override);
   const { data, error, loading } = usePoll<ErrorRateRow[]>(() => api.errorRate(params), 30000, [
     JSON.stringify(params),
   ]);
@@ -191,8 +242,16 @@ function ErrorRatePanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" 
 
 const LAT_METRICS = ["p50", "p95", "p99"] as const;
 
-function LatencyPanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" }) {
-  const params = panelParams(panel);
+function LatencyPanel({
+  panel,
+  viz,
+  override,
+}: {
+  panel: Panel;
+  viz: "chart" | "number";
+  override?: PeriodOverride;
+}) {
+  const params = panelParams(panel, override);
   const { data, error, loading } = usePoll<LatencyRow[]>(() => api.latency(params), 30000, [
     JSON.stringify(params),
   ]);
@@ -224,10 +283,10 @@ function LatencyPanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" })
   return <LineChart series={series} height={220} yLabel="ms" />;
 }
 
-function LogCountPanel({ panel }: { panel: Panel }) {
+function LogCountPanel({ panel, override }: { panel: Panel; override?: PeriodOverride }) {
   const { data, error, loading } = usePoll(
     async () => {
-      const params = panelParams(panel);
+      const params = panelParams(panel, override);
       const r = await api.logs({
         filter: params.filter,
         window: params.window,
@@ -238,7 +297,7 @@ function LogCountPanel({ panel }: { panel: Panel }) {
       return { count: r.total_matched };
     },
     30000,
-    [JSON.stringify(panelParams(panel))],
+    [JSON.stringify(panelParams(panel, override))],
   );
   if (error) return <Loading error={error} />;
   if (loading || !data) return <Loading error={null} />;
@@ -251,12 +310,13 @@ interface TopServiceRow {
   errors: number;
 }
 
-function TopServicesPanel({ panel }: { panel: Panel }) {
-  // /api/topn only takes hours; derive from the panel period.
+function TopServicesPanel({ panel, override }: { panel: Panel; override?: PeriodOverride }) {
+  // /api/topn only takes hours; derive from the effective panel period.
+  const eff = panelPeriod(panel, override);
   const { data, error, loading } = usePoll<TopServiceRow[]>(
     async () => {
       const sp = new URLSearchParams();
-      sp.set("hours", String(panelHours(panel)));
+      sp.set("hours", String(panelHours(panel, override)));
       if (panel.filter.trim()) sp.set("filter", panel.filter.trim());
       const resp = await fetch(`/api/topn?${sp.toString()}`, { credentials: "same-origin" });
       if (resp.status === 401) window.location.href = "/login";
@@ -264,7 +324,7 @@ function TopServicesPanel({ panel }: { panel: Panel }) {
       return (await resp.json()) as TopServiceRow[];
     },
     30000,
-    [panel.window, panel.from, panel.to, panel.filter],
+    [JSON.stringify(eff), panel.filter],
   );
   if (error) return <Loading error={error} />;
   if (loading || !data) return <Loading error={null} />;
@@ -290,8 +350,16 @@ function TopServicesPanel({ panel }: { panel: Panel }) {
   );
 }
 
-function AnomaliesPanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" }) {
-  const params = panelParams(panel);
+function AnomaliesPanel({
+  panel,
+  viz,
+  override,
+}: {
+  panel: Panel;
+  viz: "chart" | "number";
+  override?: PeriodOverride;
+}) {
+  const params = panelParams(panel, override);
   const { data, error, loading } = usePoll<AnomalyRow[]>(() => api.anomalies(params), 30000, [
     JSON.stringify(params),
   ]);
@@ -335,17 +403,18 @@ function AnomaliesPanel({ panel, viz }: { panel: Panel; viz: "chart" | "number" 
   );
 }
 
-/** Approximate a panel period in whole hours (for the /api/topn endpoint). */
-function panelHours(p: Panel): number {
-  if (p.window === "custom" && p.from && p.to) {
-    const f = new Date(p.from).getTime();
-    const t = new Date(p.to).getTime();
+/** Approximate an effective panel period in whole hours (for /api/topn). */
+function panelHours(p: Panel, override?: PeriodOverride): number {
+  const eff = panelPeriod(p, override);
+  if (eff.from && eff.to) {
+    const f = new Date(eff.from).getTime();
+    const t = new Date(eff.to).getTime();
     if (!Number.isNaN(f) && !Number.isNaN(t) && t > f) {
       return Math.max(1, Math.round((t - f) / 3600_000));
     }
     return 1;
   }
-  const m = (p.window || "1h").match(/^(\d+)([smhdw])$/);
+  const m = (eff.window || "1h").match(/^(\d+)([smhdw])$/);
   if (!m) return 1;
   const n = Number(m[1]);
   switch (m[2]) {

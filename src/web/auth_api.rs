@@ -13,19 +13,19 @@
 //! once, in the JSON body of `POST /v1/api-keys`, and is never retrievable
 //! after that response.
 
+use askama::Template;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use askama::Template;
 use serde::{Deserialize, Serialize};
 
 use crate::audit::{AuditHandle, ResolvedPeer};
 use crate::store::Store;
 use crate::web::auth::{
     clear_session_cookie_header, generate_token, hash_token, session_cookie_header,
-    token_display_prefix, AuthInfo, AuthState, ApiKey, Scope, SESSION_COOKIE,
+    token_display_prefix, ApiKey, AuthInfo, AuthState, Scope, SESSION_COOKIE,
 };
 use crate::web::templates::LoginTemplate;
 
@@ -58,7 +58,9 @@ pub fn router(state: AuthApiState) -> Router {
 
 /// `GET /login` — render the sign-in page (no error banner).
 async fn login_page() -> Html<String> {
-    let tmpl = LoginTemplate { error: String::new() };
+    let tmpl = LoginTemplate {
+        error: String::new(),
+    };
     Html(tmpl.render().unwrap_or_default())
 }
 
@@ -111,8 +113,14 @@ async fn login_submit_redirect(
                 .failed(reason)
                 .source_ip(&peer)
                 .emit();
-            let tmpl = LoginTemplate { error: "Invalid or revoked API key.".into() };
-            (StatusCode::UNAUTHORIZED, Html(tmpl.render().unwrap_or_default())).into_response()
+            let tmpl = LoginTemplate {
+                error: "Invalid or revoked API key.".into(),
+            };
+            (
+                StatusCode::UNAUTHORIZED,
+                Html(tmpl.render().unwrap_or_default()),
+            )
+                .into_response()
         }
     }
 }
@@ -207,7 +215,12 @@ async fn auth_logout(
         ev = ev.actor(i);
     }
     ev.emit();
-    (StatusCode::OK, h, Json(serde_json::json!({"status": "logged out"}))).into_response()
+    (
+        StatusCode::OK,
+        h,
+        Json(serde_json::json!({"status": "logged out"})),
+    )
+        .into_response()
 }
 
 /// `GET /api/auth/whoami` — returns the calling identity. Used by the SPA
@@ -302,7 +315,9 @@ async fn create_api_key(
     if bits == 0 {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "no valid scopes; pick from insert,read,write,admin"})),
+            Json(
+                serde_json::json!({"error": "no valid scopes; pick from insert,read,write,admin"}),
+            ),
         )
             .into_response();
     }
@@ -369,11 +384,9 @@ async fn revoke_api_key(
     let conn = conn.lock();
     // Find the key_hash before UPDATE so we can drop it from the cache.
     let hash: Option<String> = conn
-        .query_row(
-            "SELECT key_hash FROM api_keys WHERE id = ?",
-            [id],
-            |r| r.get(0),
-        )
+        .query_row("SELECT key_hash FROM api_keys WHERE id = ?", [id], |r| {
+            r.get(0)
+        })
         .ok();
     // Also grab the name for the audit record (best-effort).
     let target_name: Option<String> = conn
@@ -426,10 +439,18 @@ where
 fn scope_names(bits: u8) -> Vec<String> {
     let mut v = Vec::new();
     let expanded = Scope::expand(bits);
-    if expanded & Scope::Admin as u8 != 0 { v.push("admin".into()); }
-    if expanded & Scope::Write as u8 != 0 { v.push("write".into()); }
-    if expanded & Scope::Read as u8 != 0 { v.push("read".into()); }
-    if expanded & Scope::Insert as u8 != 0 { v.push("insert".into()); }
+    if expanded & Scope::Admin as u8 != 0 {
+        v.push("admin".into());
+    }
+    if expanded & Scope::Write as u8 != 0 {
+        v.push("write".into());
+    }
+    if expanded & Scope::Read as u8 != 0 {
+        v.push("read".into());
+    }
+    if expanded & Scope::Insert as u8 != 0 {
+        v.push("insert".into());
+    }
     v
 }
 
@@ -450,10 +471,9 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(
-                &std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
+            if let Ok(b) =
+                u8::from_str_radix(&std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 out.push(b);
                 i += 3;
                 continue;

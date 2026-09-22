@@ -4,4 +4,4 @@
 pub mod server;
 pub mod tools;
 
-pub use server::{spawn_mcp_stdio, spawn_mcp_sse};
+pub use server::{spawn_mcp_sse, spawn_mcp_stdio};

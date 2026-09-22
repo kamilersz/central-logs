@@ -9,8 +9,14 @@ pub enum Error {
     #[error("wal io error: {0}")]
     WalIo(#[from] std::io::Error),
 
-    #[error("wal frame corrupted: crc mismatch (expected {expected}, got {got}) at offset {offset}")]
-    WalCrc { expected: u32, got: u32, offset: u64 },
+    #[error(
+        "wal frame corrupted: crc mismatch (expected {expected}, got {got}) at offset {offset}"
+    )]
+    WalCrc {
+        expected: u32,
+        got: u32,
+        offset: u64,
+    },
 
     #[error("wal frame truncated at offset {0}")]
     WalTruncated(u64),

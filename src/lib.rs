@@ -57,8 +57,7 @@ impl RawRecord {
 }
 
 /// How a record arrived at the insert layer. Stored as a string in DuckDB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Protocol {
     HttpJson,
     SyslogUdp,

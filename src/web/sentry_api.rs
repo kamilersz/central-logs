@@ -79,8 +79,12 @@ async fn envelope_post(
     body: axum::body::Bytes,
 ) -> Response {
     if st.ingest_paused.load(std::sync::atomic::Ordering::Relaxed) {
-        return with_cors(StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "wal cap reached (retention.wal_max_bytes); ingest paused"})));
+        return with_cors(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(
+                serde_json::json!({"error": "wal cap reached (retention.wal_max_bytes); ingest paused"}),
+            ),
+        );
     }
     if !st.cfg.enabled {
         return with_cors(
@@ -119,9 +123,15 @@ async fn envelope_post(
     }
     if accepted == 0 && envelope.items.iter().all(|i| i.kind != "event") {
         // Non-event envelopes (sessions) are still a success for the SDK.
-        return with_cors(StatusCode::OK, Json(serde_json::json!({"id": last_event_id})));
+        return with_cors(
+            StatusCode::OK,
+            Json(serde_json::json!({"id": last_event_id})),
+        );
     }
-    with_cors(StatusCode::OK, Json(serde_json::json!({"id": last_event_id})))
+    with_cors(
+        StatusCode::OK,
+        Json(serde_json::json!({"id": last_event_id})),
+    )
 }
 
 async fn store_post(
@@ -130,8 +140,12 @@ async fn store_post(
     body: axum::body::Bytes,
 ) -> Response {
     if st.ingest_paused.load(std::sync::atomic::Ordering::Relaxed) {
-        return with_cors(StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "wal cap reached (retention.wal_max_bytes); ingest paused"})));
+        return with_cors(
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(
+                serde_json::json!({"error": "wal cap reached (retention.wal_max_bytes); ingest paused"}),
+            ),
+        );
     }
     if !st.cfg.enabled {
         return with_cors(
@@ -151,7 +165,11 @@ async fn store_post(
         .and_then(|v| v.as_str())
         .map(String::from);
     let ok = ingest_event(&st, &service, &ev).await;
-    let status = if ok { StatusCode::OK } else { StatusCode::BAD_REQUEST };
+    let status = if ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
     with_cors(status, Json(serde_json::json!({"id": event_id})))
 }
 
@@ -305,9 +323,7 @@ pub fn map_event(
                     .unwrap_or_default();
                 exception_fingerprint(etype, evalue, &frames)
             }
-            (None, stack) if !stack.is_empty() => {
-                crate::errors::variant_hash(stack)
-            }
+            (None, stack) if !stack.is_empty() => crate::errors::variant_hash(stack),
             _ => message_fingerprint(project, &title),
         });
 
@@ -517,8 +533,7 @@ fn trim_cr(b: &[u8]) -> &[u8] {
 /// (may carry a byte `length`) followed by the payload.
 fn parse_envelope(body: &[u8]) -> Option<Envelope> {
     let nl = body.iter().position(|&b| b == b'\n')?;
-    let headers: serde_json::Value =
-        serde_json::from_slice(trim_cr(&body[..nl])).ok()?;
+    let headers: serde_json::Value = serde_json::from_slice(trim_cr(&body[..nl])).ok()?;
     let mut items = Vec::new();
     let mut pos = nl + 1;
     while pos < body.len() {
@@ -660,7 +675,10 @@ mod tests {
         assert_eq!(rec["msg"], "TimeoutError: gateway did not respond in 42ms");
         assert_eq!(rec["exception_type"], "TimeoutError");
         // Client fingerprint wins.
-        assert_eq!(rec["fingerprint"], client_fingerprint(&["payment".into(), "timeout".into()]));
+        assert_eq!(
+            rec["fingerprint"],
+            client_fingerprint(&["payment".into(), "timeout".into()])
+        );
         // Stack serialized newest-first with in_app marker.
         let stack = rec["stack"].as_str().unwrap();
         assert!(stack.contains("pay.charge @ pay.py:99 #"), "got: {stack}");
@@ -682,7 +700,10 @@ mod tests {
             "timestamp": "2026-01-01T00:00:00Z"
         });
         let rec = map_event("svc", &event, &cfg());
-        assert_eq!(rec["level"], "warn", "sentry 'warning' normalizes to 'warn'");
+        assert_eq!(
+            rec["level"], "warn",
+            "sentry 'warning' normalizes to 'warn'"
+        );
         assert_eq!(rec["msg"], "disk almost full");
         // message events get a message-based fingerprint.
         assert_eq!(
@@ -715,7 +736,10 @@ mod tests {
         });
         let r1 = map_event("svc", &base, &cfg());
         let r2 = map_event("svc", &noisy, &cfg());
-        assert_eq!(r1["fingerprint"], r2["fingerprint"], "noise must not split groups");
+        assert_eq!(
+            r1["fingerprint"], r2["fingerprint"],
+            "noise must not split groups"
+        );
     }
 
     #[test]
@@ -756,8 +780,16 @@ mod tests {
     fn project_mapping_resolves_service_names() {
         let mut c = cfg();
         c.projects.insert("7".into(), "checkout".into());
-        assert_eq!(resolve_service("7", &c), "checkout", "explicit mapping wins");
-        assert_eq!(resolve_service("42", &c), "project-42", "unmapped numeric id");
+        assert_eq!(
+            resolve_service("7", &c),
+            "checkout",
+            "explicit mapping wins"
+        );
+        assert_eq!(
+            resolve_service("42", &c),
+            "project-42",
+            "unmapped numeric id"
+        );
         assert_eq!(
             resolve_service("checkout", &c),
             "checkout",

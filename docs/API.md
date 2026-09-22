@@ -226,6 +226,7 @@ bare_text  := a token with no key:value form → implicit message ILIKE '%text%'
 | `raw_len>=100` | `raw_len >= ?` |
 | `message~timeout` | `message ILIKE ?` (`%timeout%`) |
 | `message:"connection refused"` | `message = ?` |
+| `message:"cp cp-tekab % success"` | `message ILIKE ?` (`%` = any characters, `_` = one char) |
 | `connection` (bare) | `message ILIKE ?` (`%connection%`) |
 | `service:api level:error` | `service = ? AND level = ?` |
 | `fingerprint:bac065f4` | `fingerprint = ?` (error tracking) |
@@ -243,6 +244,13 @@ Keys are validated against a whitelist (built-in columns + configured hot
 attributes); unknown keys return a `filter_error` in the response rather than
 reaching SQL. Numeric operators (`>`, `<=`, etc.) on text columns are rejected
 at parse time. ILIKE (`~`) on non-text columns is rejected.
+
+Wildcard matching: in `:`/`=` values on text columns, `%` matches any run of
+characters and `_` matches exactly one (e.g. `message:"cp cp-tekab % success"`,
+`service:web_*`). The value is matched as a substring (implicit `%…%` wrapping,
+same as `~`); values without wildcards compare exactly. Note that inside a
+wildcard query `%`/`_` cannot be escaped (DuckDB's LIKE-ESCAPE does not honor
+`\x` escapes); `\` is matched literally.
 
 ## MCP tools
 

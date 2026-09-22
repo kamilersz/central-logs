@@ -1,0 +1,11 @@
+# Stress-test tuned profile for the temporary :8088 runtime.
+# Baseline defaults: ingest_workers=2, ingest_batch_size=2048,
+#   ingest_flush_interval_ms=1000, wal_batch_max_records=4096,
+#   wal_batch_max_delay_ms=10, insert_channel_depth=8192.
+ingest_workers = 16
+ingest_batch_size = 8192
+ingest_flush_interval_ms = 200
+wal_batch_max_records = 8192
+# Point ops (error-group upserts) pay ~ms/thread-dispatch on 80-core boxes;
+# 8 keeps bulk analytics parallel while making point statements cheap.
+duckdb_threads = 8

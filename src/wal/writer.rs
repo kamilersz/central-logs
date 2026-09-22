@@ -50,10 +50,7 @@ pub struct WalEntry {
 
 impl WalEntry {
     pub fn fire_and_forget(record: RawRecord) -> Self {
-        Self {
-            record,
-            ack: None,
-        }
+        Self { record, ack: None }
     }
 
     pub fn with_ack(record: RawRecord) -> (Self, oneshot::Receiver<()>) {
@@ -97,6 +94,49 @@ impl InsertHandle {
             .map_err(|_| crate::Error::ChannelClosed)?;
         self.gauges.channel_depth.fetch_add(1, Ordering::Relaxed);
         rx.await.map_err(|_| crate::Error::ChannelClosed)
+    }
+
+    /// Append `records` and wait ONCE for the whole batch to be durable.
+    ///
+    /// The channel is FIFO and the writer commits (write+fsync+ack) batches in
+    /// order, so when the last entry's ack fires, every earlier entry is
+    /// already fsynced — awaiting a single oneshot gives identical durability
+    /// semantics to per-record `append_acked` at a fraction of the cost
+    /// (one group-commit cycle per request instead of one per record).
+    ///
+    /// Returns the number of records durably queued and acked. If the channel
+    /// closes mid-batch, the already-queued count is returned as an error path
+    /// via `Err(ChannelClosed)` after waiting for their acks when possible.
+    pub async fn append_batch_acked(&self, records: Vec<RawRecord>) -> Result<usize> {
+        let total = records.len();
+        let mut last_rx: Option<oneshot::Receiver<()>> = None;
+        let mut queued = 0usize;
+        for record in records {
+            let (entry, rx) = WalEntry::with_ack(record);
+            match self.tx.send(entry).await {
+                Ok(()) => {
+                    self.gauges.channel_depth.fetch_add(1, Ordering::Relaxed);
+                    queued += 1;
+                    last_rx = Some(rx);
+                }
+                Err(_) => break,
+            }
+        }
+        if queued == 0 {
+            return Err(crate::Error::ChannelClosed);
+        }
+        // Wait for the last ack — covers every entry queued by this call.
+        match last_rx {
+            Some(rx) => match rx.await {
+                Ok(()) => Ok(queued),
+                Err(_) => Err(crate::Error::ChannelClosed),
+            },
+            None => Err(crate::Error::ChannelClosed),
+        }
+        .map(|n| {
+            debug_assert!(n <= total);
+            n
+        })
     }
 
     /// Append `record` without waiting for fsync (UDP syslog). Returns Err only
@@ -257,10 +297,7 @@ impl WalWriter {
             encode_record_into(&mut buf, &entry.record);
         }
 
-        let mut acks: Vec<oneshot::Sender<()>> = batch
-            .into_iter()
-            .filter_map(|e| e.ack)
-            .collect();
+        let mut acks: Vec<oneshot::Sender<()>> = batch.into_iter().filter_map(|e| e.ack).collect();
 
         if buf.is_empty() {
             for ack in acks {
@@ -317,7 +354,11 @@ impl WalWriter {
             .await?;
         self.writer_pos = file.metadata().await?.len();
         self.file = Some(file);
-        tracing::debug!(segment = self.rotator.current_id(), pos = self.writer_pos, "opened segment");
+        tracing::debug!(
+            segment = self.rotator.current_id(),
+            pos = self.writer_pos,
+            "opened segment"
+        );
         Ok(())
     }
 

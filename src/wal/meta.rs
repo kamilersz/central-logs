@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use redb::{Database, ReadableTable, ReadableDatabase, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::Result;
 
@@ -158,8 +158,14 @@ mod tests {
         let meta = WalMeta::open(&path).unwrap();
         meta.set_meta("k", "v").unwrap();
         assert_eq!(meta.get_meta("k").unwrap().as_deref(), Some("v"));
-        meta.set_checkpoint(7, Checkpoint { segment_id: 3, byte_offset: 1234 })
-            .unwrap();
+        meta.set_checkpoint(
+            7,
+            Checkpoint {
+                segment_id: 3,
+                byte_offset: 1234,
+            },
+        )
+        .unwrap();
         let cp = meta.get_checkpoint(7).unwrap();
         assert_eq!(cp.segment_id, 3);
         assert_eq!(cp.byte_offset, 1234);
