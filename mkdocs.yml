@@ -72,6 +72,12 @@ markdown_extensions:
 plugins:
   - search
 
+# Keep mkdocs permissive — broken anchors / unknown cross-doc links
+# warn but don't fail the build. Read the Docs does not surface those
+# warnings as failures either way, but explicitly disabling strict-mode
+# makes the build behavior obvious to anyone tweaking this file.
+strict: false
+
 # `llms.txt` lives next to the markdown under docs/ — mkdocs copies any
 # non-markdown file there to the site root unchanged, so it ends up
 # served at /llms.txt for LLM agents without an extra_files directive.

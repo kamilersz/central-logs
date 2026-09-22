@@ -400,7 +400,7 @@ impl ErrorTracker {
             tracing::warn!(?e, "error-track: commit failed");
         }
         if total_ms > 100 {
-            tracing::info!(
+            tracing::debug!(
                 rows = rows.len(),
                 groups = upsert_n,
                 upsert_ms = upsert_ms_total as u64,

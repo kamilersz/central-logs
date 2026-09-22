@@ -9,7 +9,7 @@ KEY=$(grep -oP '(?<=KEY=).*' ../../.env-8088)
 BASE=http://127.0.0.1:8088
 OUT=/tmp/drain_$(date +%s).csv
 
-(while :; do
+(for i in $(seq 1 400); do
     M=$(curl -s -H "Authorization: Bearer $KEY" "$BASE/metrics")
     L=$(awk '/^central_logs_ingest_lag_bytes/{printf "%.1f", $2/1048576}' <<< "$M")
     R=$(awk '/^central_logs_records_total/{print $2}' <<< "$M")

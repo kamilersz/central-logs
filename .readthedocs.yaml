@@ -17,16 +17,17 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.12"
-  # Don't fail the build on broken in-page anchors — Markdown → HTML
-  # conversion is imperfect and we don't want a single renamed heading
-  # to break the whole site.
-  fail_on_warning: false
+  # RTD's `build:` schema does NOT support `fail_on_warning` — that's a
+  # mkdocs key (see `mkdocs.yml`). The build is permissive at the
+  # mkdocs level (`strict: false`) so link rot in third-party docs
+  # doesn't break deploys.
 
 mkdocs:
   configuration: mkdocs.yml
-  # `fail_on_warning` is also respected at the mkdocs level; we keep the
-  # build permissive (above) so link rot in third-party docs doesn't
-  # block deploys.
+  # We intentionally keep mkdocs strict-mode OFF (mkdocs.yml). That
+  # matches "don't fail the build on a single broken in-page anchor":
+  # Markdown → HTML conversion is imperfect and we don't want one
+  # renamed heading to block deploys.
 
 formats:
   # llms.txt is served at /llms.txt for LLM agents (see docs/llms.md).

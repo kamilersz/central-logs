@@ -227,12 +227,10 @@ async fn flush_timed(
 ) {
     let n = buf.len();
     let t0 = Instant::now();
-    let before = stats.lock().records_ingested;
     flush(store, meta, worker_id, buf, pending_checkpoint, stats, error_tracker).await;
-    let _ = before;
     let ms = t0.elapsed().as_millis();
     if ms > 50 {
-        tracing::info!(
+        tracing::debug!(
             worker_id,
             n,
             flush_ms = ms,
