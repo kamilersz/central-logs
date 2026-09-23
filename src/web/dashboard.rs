@@ -176,7 +176,10 @@ async fn api_counters(State(st): State<WebState>) -> impl IntoResponse {
 }
 
 /// Pipeline health snapshot (LESSON_LEARNED: backpressure must be visible
-/// before data starts dropping). One call powers the SPA "Pipeline" page.
+/// before data starts dropping). One call powers the SPA "Pipeline" page
+/// AND the global header status indicator — so the two rollup-derived
+/// fields (`logs_per_minute`, `active_services_24h`) that the top bar
+/// needs live here too rather than triggering a second poll.
 #[derive(Debug, serde::Serialize)]
 pub struct PipelineStatus {
     pub channel_depth: i64,
@@ -187,6 +190,15 @@ pub struct PipelineStatus {
     pub audit_dropped_total: u64,
     pub records_total: u64,
     pub errors_total: u64,
+    /// Records ingested in the trailing minute (sum of `rollup_1m.n` over
+    /// `now - 60s .. now`). `0` on a fresh install before the first
+    /// rollup cycle has fired.
+    pub logs_per_minute: i64,
+    /// Distinct `service` values seen in the trailing 24 hours of
+    /// `rollup_1h`. Cheap (the rollup table is already
+    /// pre-aggregated) and survives when the hot tier has been
+    /// compacted to cold.
+    pub active_services_24h: i64,
 }
 
 async fn api_pipeline(State(st): State<WebState>) -> impl IntoResponse {
@@ -200,6 +212,35 @@ async fn api_pipeline(State(st): State<WebState>) -> impl IntoResponse {
     } else {
         0.0
     };
+
+    // Rollup-derived header counters. Both queries have to handle "no
+    // rows yet" — the rollup job hasn't run on a fresh install, and
+    // `query_row` returns `Err` instead of a row there. The
+    // `unwrap_or(0)` shape keeps the worst case (cold start) from
+    // surfacing a 500.
+    let now = chrono::Utc::now();
+    let one_min_ago = now - chrono::Duration::seconds(60);
+    let one_day_ago = now - chrono::Duration::hours(24);
+    let (logs_per_minute, active_services_24h) = {
+        let conn = st.store.conn();
+        let conn = conn.lock();
+        let lpm: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(n), 0)::BIGINT FROM rollup_1m WHERE bucket >= ?1",
+                [one_min_ago],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let active: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT service)::BIGINT FROM rollup_1h WHERE bucket >= ?1",
+                [one_day_ago],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        (lpm, active)
+    };
+
     axum::Json(PipelineStatus {
         channel_depth: depth,
         channel_capacity: capacity,
@@ -209,6 +250,8 @@ async fn api_pipeline(State(st): State<WebState>) -> impl IntoResponse {
         audit_dropped_total: counters.audit_dropped_total,
         records_total: counters.records_total,
         errors_total: counters.errors_total,
+        logs_per_minute,
+        active_services_24h,
     })
 }
 

@@ -323,6 +323,12 @@ export interface PipelineStatus {
   audit_dropped_total: number;
   records_total: number;
   errors_total: number;
+  /** Records ingested in the trailing minute (sum of rollup_1m.n over
+   *  now-60s..now). 0 before the first rollup cycle fires. */
+  logs_per_minute: number;
+  /** Distinct `service` values seen in the trailing 24 hours of
+   *  rollup_1h. */
+  active_services_24h: number;
 }
 
 // ─── Error tracking (Sentry-SDK-compatible; see docs/ERROR_TRACKING.md) ───

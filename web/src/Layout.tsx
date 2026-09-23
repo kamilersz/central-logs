@@ -1,14 +1,70 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { useState } from "react";
-import { api, WhoamiResponse } from "./api";
+import { api, type PipelineStatus, WhoamiResponse } from "./api";
+import { usePoll } from "./components";
 import ThemeMenu from "./ThemeMenu";
 
 interface LayoutProps {
   whoami: WhoamiResponse;
 }
 
+/** Compact global status indicator. Polls `/api/pipeline` (the same
+ *  endpoint the Pipeline page uses) so we never make a second request
+ *  just to render the top bar — and so the numbers the user sees
+ *  there match the Pipeline page verbatim.
+ *
+ *  Three values, left → right:
+ *    • logs/m        — records ingested over the trailing 60s
+ *    • Queue: NN%    — insert-channel fill ratio (colour-coded)
+ *    • Services: NN  — distinct `service` values seen in the last 24h
+ */
+function HeaderStatus() {
+  const { data } = usePoll<PipelineStatus>(() => api.pipeline(), 10_000, []);
+  const fillPct = data ? Math.min(100, data.channel_fill_ratio * 100) : 0;
+  const fillColor =
+    fillPct > 80
+      ? "text-red-600 dark:text-red-300"
+      : fillPct > 50
+      ? "text-amber-600 dark:text-amber-300"
+      : "text-emerald-600 dark:text-emerald-300";
+
+  // Render placeholder dashes before the first poll resolves so the
+  // header doesn't jump around as data arrives. After that we always
+  // render — even with default zeroes — so the bar stays stable.
+  if (!data) {
+    return (
+      <div className="flex items-center gap-4 text-xs cl-mono text-tremor-content-subtle dark:text-dark-tremor-content-subtle">
+        <span>— logs/m</span>
+        <span>Queue: —</span>
+        <span>Active services (24h): —</span>
+      </div>
+    );
+  }
+
+  const lpm = data.logs_per_minute;
+  const lpmLabel =
+    lpm >= 1000
+      ? `${(lpm / 1000).toFixed(lpm >= 10_000 ? 0 : 1)}k`
+      : `${lpm}`;
+  const services = data.active_services_24h;
+
+  return (
+    <div
+      className="flex items-center gap-4 text-xs cl-mono"
+      title="live traffic snapshot — same data as the Pipeline page"
+    >
+      <span className="text-tremor-content-emphasis dark:text-dark-tremor-content-emphasis">
+        {lpmLabel} logs/m
+      </span>
+      <span className={fillColor}>Queue: {fillPct.toFixed(0)}%</span>
+      <span className="text-tremor-content-emphasis dark:text-dark-tremor-content-emphasis">
+        Active services (24h): {services}
+      </span>
+    </div>
+  );
+}
+
 export default function Layout({ whoami }: LayoutProps) {
-  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const isAdmin = whoami.scopes.includes("admin");
 
@@ -67,6 +123,9 @@ export default function Layout({ whoami }: LayoutProps) {
               </NavLink>
             ))}
           </nav>
+
+          {/* Live status — polls the same /api/pipeline the Pipeline page uses */}
+          <HeaderStatus />
 
           {/* User + preferences */}
           <div className="ml-auto flex items-center gap-3 text-sm">
