@@ -78,39 +78,46 @@ export default function ThemeMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border border-tremor-border bg-tremor-background-muted p-3 shadow-tremor-dropdown animate-cl-fade-in">
-          {groups.map((group, gi) => (
-            <div key={group} className={gi > 0 ? "mt-3 pt-3 border-t border-tremor-border" : ""}>
-              <div className="cl-stat-label mb-2">{group}</div>
-              <div className="grid grid-cols-1 gap-1">
-                {THEMES.filter((t) => t.group === group).map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => {
-                      applyTheme(t.id);
-                      setTheme(t.id);
-                    }}
-                    className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                      theme === t.id
-                        ? "bg-tremor-brand-faint text-tremor-brand"
-                        : "text-tremor-content hover:bg-tremor-background-subtle hover:text-tremor-content-strong"
-                    }`}
-                  >
-                    <ThemeSwatch swatch={t.swatch} />
-                    <span className="flex-1">{t.label}</span>
-                    {theme === t.id && (
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
-                ))}
+        <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border border-tremor-border bg-tremor-background-muted shadow-tremor-dropdown animate-cl-fade-in flex flex-col max-h-[min(80vh,32rem)]">
+          {/* Themes: scrollable region. The list is long enough that
+              we cap the height and let the inner column scroll
+              independently so the panel doesn't outgrow the viewport. */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-3">
+            {groups.map((group, gi) => (
+              <div key={group} className={gi > 0 ? "mt-3 pt-3 border-t border-tremor-border" : ""}>
+                <div className="cl-stat-label mb-2">{group}</div>
+                <div className="grid grid-cols-1 gap-1">
+                  {THEMES.filter((t) => t.group === group).map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => {
+                        applyTheme(t.id);
+                        setTheme(t.id);
+                      }}
+                      className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                        theme === t.id
+                          ? "bg-tremor-brand-faint text-tremor-brand"
+                          : "text-tremor-content hover:bg-tremor-background-subtle hover:text-tremor-content-strong"
+                      }`}
+                    >
+                      <ThemeSwatch swatch={t.swatch} />
+                      <span className="flex-1">{t.label}</span>
+                      {theme === t.id && (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
 
-          <div className="mt-3 pt-3 border-t border-tremor-border">
+          {/* Fonts: pinned at the bottom of the panel so they stay in
+              view while the theme column above scrolls. */}
+          <div className="shrink-0 p-3 border-t border-tremor-border">
             <div className="cl-stat-label mb-2">Fonts</div>
             <label className="mb-2 block">
               <span className="mb-1 block text-xs text-tremor-content-subtle">Interface</span>

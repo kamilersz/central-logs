@@ -152,6 +152,7 @@ export interface WhoamiResponse {
   key_id: number | null;
   name: string;
   scopes: string[];
+  /** "cookie" / "bearer" / "staticadminkey" */
   via: string;
 }
 
