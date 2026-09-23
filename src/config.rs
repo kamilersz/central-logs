@@ -166,6 +166,19 @@ pub struct Config {
     #[serde(default)]
     pub error_tracking: ErrorTrackingConfig,
 
+    /// Container/orchestrator push protocols (Docker Engine log drivers +
+    /// Kubernetes audit webhook): `[ingest.gelf]`, `[ingest.fluentd]`,
+    /// `[ingest.splunk_hec]`, `[ingest.k8s_audit]`. All disabled by default.
+    #[serde(default)]
+    pub ingest: IngestConfig,
+
+    /// Built-in pull collectors (`[collector.docker]`, `[collector.kubernetes]`):
+    /// follow container/pod log streams from the Docker Engine API and the
+    /// Kubernetes API and feed them into the normal WAL pipeline. Disabled
+    /// by default.
+    #[serde(default)]
+    pub collector: CollectorConfig,
+
     /// Tracing filter (RUST_LOG-style).
     pub log_filter: String,
 }
@@ -417,6 +430,230 @@ pub enum Schedule {
     Size(u64),
 }
 
+// =====================================================================
+// Engine/cluster push protocols + pull collectors (docs/ingestion/containers.md)
+// =====================================================================
+
+/// Push-protocol listeners: `[ingest.gelf]`, `[ingest.fluentd]`,
+/// `[ingest.splunk_hec]`, `[ingest.k8s_audit]`. Each is off by default so
+/// existing deployments keep their exact surface area.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct IngestConfig {
+    /// GELF 1.1 ingest — Docker Engine's `gelf` log driver
+    /// (`--log-driver=gelf --log-opt gelf-address=udp://host:12201`) and any
+    /// GELF shipper. UDP supports gzip/zlib payloads + GELF chunked
+    /// reassembly; TCP accepts null-terminated JSON.
+    pub gelf: GelfIngestConfig,
+    /// Fluentd forward protocol (MessagePack over TCP) — Docker Engine's
+    /// `fluentd` log driver and fluentd/fluent-bit `forward` outputs.
+    pub fluentd: FluentdIngestConfig,
+    /// Splunk HEC-compatible HTTP endpoint — Docker Engine's `splunk` log
+    /// driver (`--log-driver=splunk --log-opt splunk-url=https://…`) posts
+    /// to `/services/collector/event/1.0`.
+    pub splunk_hec: SplunkHecIngestConfig,
+    /// Kubernetes audit webhook — `kube-apiserver`
+    /// `--audit-webhook-config-file` POSTs `audit.k8s.io/v1` EventList
+    /// batches to `/ingest/kubernetes/audit`.
+    pub k8s_audit: K8sAuditIngestConfig,
+}
+
+impl Default for IngestConfig {
+    fn default() -> Self {
+        Self {
+            gelf: GelfIngestConfig::default(),
+            fluentd: FluentdIngestConfig::default(),
+            splunk_hec: SplunkHecIngestConfig::default(),
+            k8s_audit: K8sAuditIngestConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GelfIngestConfig {
+    pub enabled: bool,
+    /// UDP bind for GELF datagrams (Docker default driver port 12201).
+    /// Empty = UDP disabled.
+    pub udp_bind: String,
+    /// TCP bind for null-terminated GELF JSON. Empty = TCP disabled.
+    pub tcp_bind: String,
+    /// GELF chunk reassembly timeout (chunks older than this are dropped).
+    pub chunk_timeout_secs: u64,
+}
+
+impl Default for GelfIngestConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            udp_bind: "0.0.0.0:12201".to_string(),
+            tcp_bind: "0.0.0.0:12201".to_string(),
+            chunk_timeout_secs: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct FluentdIngestConfig {
+    pub enabled: bool,
+    /// TCP bind for the MessagePack forward protocol (Docker default 24224).
+    pub tcp_bind: String,
+    /// Reply `{"ack": <id>}` when the client requests acknowledgement
+    /// (`fluentd-request-ack=true`). Keep on for lossless delivery.
+    pub ack: bool,
+}
+
+impl Default for FluentdIngestConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tcp_bind: "0.0.0.0:24224".to_string(),
+            ack: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SplunkHecIngestConfig {
+    pub enabled: bool,
+    /// Static HEC token accepted in `Authorization: Splunk <token>` in
+    /// ADDITION to normal API keys. Empty = API keys only. The Docker
+    /// driver requires *some* token (`--log-opt splunk-token=…`), so any
+    /// active insert-scoped API key works.
+    pub token: String,
+}
+
+impl Default for SplunkHecIngestConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct K8sAuditIngestConfig {
+    pub enabled: bool,
+    /// Audit stages to DROP (kube-apiserver emits one event per configured
+    /// stage per request). Common dedup: `["RequestReceived"]` keeps only
+    /// the completed/started response events. Empty = keep all stages.
+    pub omit_stages: Vec<String>,
+}
+
+impl Default for K8sAuditIngestConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            omit_stages: Vec::new(),
+        }
+    }
+}
+
+/// Pull collectors: `[collector.docker]`, `[collector.kubernetes]`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CollectorConfig {
+    /// Follow container logs from the Docker Engine API (unix socket by
+    /// default) — the pull-based alternative for hosts where changing each
+    /// container's `--log-driver` is impractical.
+    pub docker: DockerCollectorConfig,
+    /// Follow pod logs from the Kubernetes API (service-account bearer
+    /// token + CA by default) — in-cluster DaemonSet-style collection
+    /// without a third-party agent.
+    pub kubernetes: K8sCollectorConfig,
+}
+
+impl Default for CollectorConfig {
+    fn default() -> Self {
+        Self {
+            docker: DockerCollectorConfig::default(),
+            kubernetes: K8sCollectorConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct DockerCollectorConfig {
+    pub enabled: bool,
+    /// Docker Engine API endpoint. `unix:///var/run/docker.sock` (default)
+    /// or `tcp://host:port`.
+    pub socket: String,
+    /// Engine API version path (e.g. `v1.41`). Empty = unprefixed endpoints.
+    pub api_version: String,
+    /// Container-name globs to include (e.g. `web-*`). Empty = all.
+    pub include: Vec<String>,
+    /// Container-name globs to exclude. Wins over `include`.
+    pub exclude: Vec<String>,
+    /// How often to re-list containers and attach to new ones.
+    pub refresh_secs: u64,
+    /// Lines of per-container history ingested when the collector first
+    /// attaches (`tail` query param). 0 = only new lines.
+    pub tail_lines: u64,
+}
+
+impl Default for DockerCollectorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            socket: "unix:///var/run/docker.sock".to_string(),
+            api_version: "v1.41".to_string(),
+            include: Vec::new(),
+            exclude: Vec::new(),
+            refresh_secs: 30,
+            tail_lines: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct K8sCollectorConfig {
+    pub enabled: bool,
+    /// Kubernetes API server base URL, e.g.
+    /// `https://kubernetes.default.svc` (in-cluster) or an explicit URL.
+    pub api_url: String,
+    /// Literal bearer token. Preferred in-cluster mode is `token_file`.
+    pub token: String,
+    /// Service-account token file (auto-rotated tokens are re-read each
+    /// discovery refresh). Default path works inside a pod.
+    pub token_file: String,
+    /// Cluster CA bundle for TLS verification.
+    pub ca_file: String,
+    /// Skip TLS verification (dev clusters only).
+    pub insecure_tls: bool,
+    /// Namespaces to watch. Empty = all namespaces.
+    pub namespaces: Vec<String>,
+    /// Optional label selector forwarded to the pods list call
+    /// (e.g. `app=web`).
+    pub label_selector: String,
+    /// How often to re-list pods and attach to new ones.
+    pub refresh_secs: u64,
+    /// Lines of history ingested when first attaching (`tailLines`).
+    pub tail_lines: u64,
+}
+
+impl Default for K8sCollectorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_url: "https://kubernetes.default.svc".to_string(),
+            token: String::new(),
+            token_file: "/var/run/secrets/kubernetes.io/serviceaccount/token".to_string(),
+            ca_file: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt".to_string(),
+            insecure_tls: false,
+            namespaces: Vec::new(),
+            label_selector: String::new(),
+            refresh_secs: 30,
+            tail_lines: 0,
+        }
+    }
+}
+
 /// Parse a duration like `45s`, `12h`, `30d`, `2mo` (60d), `1y` (365d).
 pub fn parse_duration(s: &str) -> Result<chrono::Duration, crate::Error> {
     let t = s.trim().to_ascii_lowercase();
@@ -567,6 +804,8 @@ impl Default for Config {
             smtp: SmtpConfig::default(),
             geoip_db_path: None,
             error_tracking: ErrorTrackingConfig::default(),
+            ingest: IngestConfig::default(),
+            collector: CollectorConfig::default(),
             log_filter: "info,central_logs=debug".to_string(),
         }
     }
@@ -818,6 +1057,65 @@ impl Config {
             return Err(crate::Error::config(
                 "error_tracking.samples_per_group must be >= 1",
             ));
+        }
+        // Container/orchestrator push + pull integration sanity.
+        if self.ingest.gelf.enabled
+            && self.ingest.gelf.udp_bind.trim().is_empty()
+            && self.ingest.gelf.tcp_bind.trim().is_empty()
+        {
+            return Err(crate::Error::config(
+                "ingest.gelf.enabled = true but both udp_bind and tcp_bind are empty; \
+                 set at least one (e.g. '0.0.0.0:12201')",
+            ));
+        }
+        if self.ingest.fluentd.enabled && self.ingest.fluentd.tcp_bind.trim().is_empty() {
+            return Err(crate::Error::config(
+                "ingest.fluentd.enabled = true but tcp_bind is empty",
+            ));
+        }
+        if self.ingest.k8s_audit.enabled {
+            const STAGES: &[&str] = &[
+                "RequestReceived",
+                "ResponseStarted",
+                "ResponseComplete",
+                "Panic",
+            ];
+            for stage in &self.ingest.k8s_audit.omit_stages {
+                if !STAGES.contains(&stage.as_str()) {
+                    return Err(crate::Error::config(format!(
+                        "ingest.k8s_audit.omit_stages entry '{stage}' is not a valid audit \
+                         stage (use one of {STAGES:?})"
+                    )));
+                }
+            }
+        }
+        if self.collector.docker.enabled {
+            let s = self.collector.docker.socket.trim();
+            if !(s.starts_with("unix://") || s.starts_with("tcp://") || s.starts_with("http://")) {
+                return Err(crate::Error::config(format!(
+                    "collector.docker.socket must be unix://… or tcp://… (got '{}')",
+                    self.collector.docker.socket
+                )));
+            }
+            if self.collector.docker.refresh_secs == 0 {
+                return Err(crate::Error::config(
+                    "collector.docker.refresh_secs must be >= 1",
+                ));
+            }
+        }
+        if self.collector.kubernetes.enabled {
+            let u = self.collector.kubernetes.api_url.trim();
+            if !u.starts_with("https://") && !u.starts_with("http://") {
+                return Err(crate::Error::config(format!(
+                    "collector.kubernetes.api_url must be an http(s) URL (got '{}')",
+                    self.collector.kubernetes.api_url
+                )));
+            }
+            if self.collector.kubernetes.refresh_secs == 0 {
+                return Err(crate::Error::config(
+                    "collector.kubernetes.refresh_secs must be >= 1",
+                ));
+            }
         }
         for url in &self.error_tracking.notify.webhooks {
             if !url.starts_with("http://") && !url.starts_with("https://") {

@@ -505,6 +505,29 @@ async fn main() -> anyhow::Result<()> {
     };
     let mut http_app = http_router(insert_state);
 
+    // Splunk HEC-compatible ingest (Docker `splunk` driver) + Kubernetes
+    // audit webhook — mounted in all builds so `--no-default-features`
+    // deployments keep the insert surface complete.
+    http_app = http_app
+        .merge(central_logs::insert::splunk_hec_router(
+            central_logs::insert::splunk_hec::SplunkHecState {
+                handle: handle.clone(),
+                counters: counters.clone(),
+                cfg: Arc::new(parking_lot::Mutex::new(cfg.clone())),
+                backpressure_timeout: cfg.insert_backpressure_timeout(),
+                ingest_paused: ingest_paused.clone(),
+            },
+        ))
+        .merge(central_logs::insert::k8s_audit::router(
+            central_logs::insert::k8s_audit::K8sAuditState {
+                handle: handle.clone(),
+                counters: counters.clone(),
+                cfg: Arc::new(parking_lot::Mutex::new(cfg.ingest.k8s_audit.clone())),
+                backpressure_timeout: cfg.insert_backpressure_timeout(),
+                ingest_paused: ingest_paused.clone(),
+            },
+        ));
+
     // Shared alert-notification infrastructure (HTTP for webhook/telegram
     // test sends, SMTP config for email channels).
     let smtp = Arc::new(cfg.smtp.clone());
@@ -633,6 +656,23 @@ async fn main() -> anyhow::Result<()> {
                 revoked_at: None,
             });
         }
+        // Splunk HEC static token (`[ingest.splunk_hec].token`): the Docker
+        // `splunk` driver requires *some* token; register it as an
+        // insert-scoped synthetic key so `Authorization: Splunk <token>`
+        // passes the auth middleware like a CRUD key would.
+        let hec_token = cfg.ingest.splunk_hec.token.trim().to_string();
+        if !hec_token.is_empty() {
+            keys.push(central_logs::web::auth::ApiKey {
+                id: -1,
+                name: "splunk-hec-token".into(),
+                key_hash: central_logs::web::auth::hash_token(&hec_token),
+                key_prefix: central_logs::web::auth::token_display_prefix(&hec_token),
+                scopes: central_logs::web::auth::Scope::Insert as u8,
+                created_at: chrono::Utc::now(),
+                last_used_at: None,
+                revoked_at: None,
+            });
+        }
         let static_admin = if cfg.http_api_key.trim().is_empty() {
             None
         } else {
@@ -742,6 +782,59 @@ async fn main() -> anyhow::Result<()> {
     };
     let _syslog =
         spawn_syslog_listeners(syslog_udp, syslog_tcp, syslog_state, shutdown.clone()).await;
+
+    // 5b) Engine/cluster push listeners: GELF (Docker `gelf` log driver) and
+    // Fluentd forward protocol (Docker `fluentd` log driver). The Splunk HEC
+    // + Kubernetes audit endpoints ride the main HTTP router below.
+    {
+        use central_logs::insert::{spawn_fluentd_listener, spawn_gelf_listeners, FluentdState, GelfState};
+        if cfg.ingest.gelf.enabled {
+            let chunk_timeout =
+                std::time::Duration::from_secs(cfg.ingest.gelf.chunk_timeout_secs.max(1));
+            let _gelf = spawn_gelf_listeners(
+                (!cfg.ingest.gelf.udp_bind.trim().is_empty())
+                    .then_some(cfg.ingest.gelf.udp_bind.as_str()),
+                (!cfg.ingest.gelf.tcp_bind.trim().is_empty())
+                    .then_some(cfg.ingest.gelf.tcp_bind.as_str()),
+                GelfState {
+                    handle: handle.clone(),
+                    counters: counters.clone(),
+                },
+                shutdown.clone(),
+                chunk_timeout,
+            )
+            .await;
+        }
+        if cfg.ingest.fluentd.enabled {
+            let _fluentd = spawn_fluentd_listener(
+                Some(cfg.ingest.fluentd.tcp_bind.as_str()),
+                FluentdState {
+                    handle: handle.clone(),
+                    counters: counters.clone(),
+                    ack: cfg.ingest.fluentd.ack,
+                },
+                shutdown.clone(),
+            )
+            .await;
+        }
+    }
+
+    // 5c) Built-in pull collectors (Docker Engine API + Kubernetes API).
+    {
+        use central_logs::collector::{docker as docker_collector, kubernetes as k8s_collector};
+        let _docker_c = docker_collector::spawn(
+            cfg.collector.docker.clone(),
+            handle.clone(),
+            counters.clone(),
+            shutdown.clone(),
+        );
+        let _k8s_c = k8s_collector::spawn(
+            cfg.collector.kubernetes.clone(),
+            handle.clone(),
+            counters.clone(),
+            shutdown.clone(),
+        );
+    }
 
     // 6) MCP server (if enabled).
     #[cfg(feature = "mcp")]

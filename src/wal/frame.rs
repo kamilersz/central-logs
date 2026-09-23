@@ -65,6 +65,12 @@ fn protocol_tag(p: Protocol) -> u8 {
         Protocol::OtlpLog => 5,
         Protocol::OtlpSpan => 6,
         Protocol::OtlpMetric => 7,
+        Protocol::Gelf => 8,
+        Protocol::Fluentd => 9,
+        Protocol::SplunkHec => 10,
+        Protocol::K8sAudit => 11,
+        Protocol::DockerApi => 12,
+        Protocol::K8sApi => 13,
     }
 }
 
@@ -77,6 +83,12 @@ fn protocol_from_tag(tag: u8) -> Result<Protocol> {
         5 => Protocol::OtlpLog,
         6 => Protocol::OtlpSpan,
         7 => Protocol::OtlpMetric,
+        8 => Protocol::Gelf,
+        9 => Protocol::Fluentd,
+        10 => Protocol::SplunkHec,
+        11 => Protocol::K8sAudit,
+        12 => Protocol::DockerApi,
+        13 => Protocol::K8sApi,
         other => {
             return Err(Error::invalid_input(format!(
                 "unknown protocol tag {other}"
@@ -231,6 +243,12 @@ mod tests {
             Protocol::OtlpLog,
             Protocol::OtlpSpan,
             Protocol::OtlpMetric,
+            Protocol::Gelf,
+            Protocol::Fluentd,
+            Protocol::SplunkHec,
+            Protocol::K8sAudit,
+            Protocol::DockerApi,
+            Protocol::K8sApi,
         ] {
             let rec = sample(p);
             let mut buf = Vec::new();

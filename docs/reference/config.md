@@ -24,6 +24,49 @@ syslog_udp_bind   = "0.0.0.0:5140"
 syslog_tcp_enabled = true
 syslog_tcp_bind   = "0.0.0.0:5140"
 
+# ── Container/orchestrator push protocols (all disabled by default) ─────────
+# Full guide: docs/ingestion/containers.md
+[ingest.gelf]
+enabled = false               # Docker --log-driver=gelf + GELF shippers
+udp_bind = "0.0.0.0:12201"    # gzip/zlib + GELF chunked reassembly
+tcp_bind = "0.0.0.0:12201"    # JSON + NUL framing
+chunk_timeout_secs = 5
+
+[ingest.fluentd]
+enabled = false               # Docker --log-driver=fluentd (msgpack forward)
+tcp_bind = "0.0.0.0:24224"
+ack = true
+
+[ingest.splunk_hec]
+enabled = false               # Docker --log-driver=splunk
+token = ""                    # optional static token; API keys also work
+
+[ingest.k8s_audit]
+enabled = false               # kube-apiserver audit webhook
+omit_stages = []              # e.g. ["RequestReceived"]
+
+# ── Built-in pull collectors (all disabled by default) ──────────────────────
+[collector.docker]
+enabled = false               # follow containers via the Engine API
+socket = "unix:///var/run/docker.sock"
+api_version = "v1.41"
+include = []                  # container-name globs; [] = all
+exclude = []
+refresh_secs = 30
+tail_lines = 0
+
+[collector.kubernetes]
+enabled = false               # follow pod logs via the Kubernetes API
+api_url = "https://kubernetes.default.svc"
+token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+token = ""                    # literal token alternative
+insecure_tls = false
+namespaces = []               # [] = all
+label_selector = ""
+refresh_secs = 30
+tail_lines = 0
+
 # ── MCP ─────────────────────────────────────────────────────────────────────
 mcp_mode = "off"               # off | stdio | sse  (sse is rejected at startup)
 mcp_http_bind = "0.0.0.0:8081"

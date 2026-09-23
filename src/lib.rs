@@ -13,6 +13,7 @@
 pub mod ai;
 pub mod alerts;
 pub mod audit;
+pub mod collector;
 pub mod config;
 pub mod error;
 pub mod errors;
@@ -77,6 +78,40 @@ pub enum Protocol {
     /// one point; the numeric value lands in `attributes.value`, the metric
     /// name in `message`, and labels in the remaining attributes.
     OtlpMetric,
+    /// GELF 1.1 messages — the wire protocol of Docker Engine's `gelf` log
+    /// driver (`--log-driver=gelf --log-opt gelf-address=udp://…`) and any
+    /// GELF-capable shipper. UDP (with GELF chunking + gzip/zlib) and TCP
+    /// (null-terminated JSON). Docker adds `_container_id`, `_container_name`,
+    /// `_image_name`, `_tag`, … extras. Queryable via `protocol:gelf`.
+    Gelf,
+    /// Fluentd forward protocol (MessagePack) — Docker Engine's `fluentd` log
+    /// driver (`--log-driver=fluentd`) and fluentd/fluent-bit forward
+    /// outputs. One `[tag, time, record, option]` msgpack array per entry;
+    /// Docker's record carries `container_id`, `container_name`, `source`,
+    /// `log`. Queryable via `protocol:fluentd`.
+    Fluentd,
+    /// Splunk HEC-compatible events (`POST /services/collector/event/1.0`) —
+    /// the wire protocol of Docker Engine's `splunk` log driver and any HEC
+    /// client. Body: concatenated `{"time":…,"event":…,"sourcetype":…}`
+    /// objects. Queryable via `protocol:splunk_hec`.
+    SplunkHec,
+    /// Kubernetes API-server audit events — the webhook audit backend
+    /// (`kube-apiserver --audit-webhook-config-file`) POSTs
+    /// `{apiVersion:"audit.k8s.io/v1",kind:"EventList",items:[…]}` batches.
+    /// Each item becomes one row: verb/objectRef/responseStatus ride in
+    /// `attributes`, `auditID` maps to `trace_id`. Queryable via
+    /// `protocol:k8s_audit`.
+    K8sAudit,
+    /// Container log lines pulled from the Docker Engine API by the built-in
+    /// collector (`[collector.docker]`, unix socket follow streams). Rows
+    /// carry `container_id`/`image`/`stream` in attributes. Queryable via
+    /// `protocol:docker_api`.
+    DockerApi,
+    /// Pod log lines pulled from the Kubernetes API by the built-in collector
+    /// (`[collector.kubernetes]`, pod log follow streams). Rows carry
+    /// `namespace`/`pod`/`container` in attributes. Queryable via
+    /// `protocol:k8s_api`.
+    K8sApi,
 }
 
 impl Protocol {
@@ -89,6 +124,12 @@ impl Protocol {
             Protocol::OtlpLog => "otlp_log",
             Protocol::OtlpSpan => "otlp_span",
             Protocol::OtlpMetric => "otlp_metric",
+            Protocol::Gelf => "gelf",
+            Protocol::Fluentd => "fluentd",
+            Protocol::SplunkHec => "splunk_hec",
+            Protocol::K8sAudit => "k8s_audit",
+            Protocol::DockerApi => "docker_api",
+            Protocol::K8sApi => "k8s_api",
         }
     }
 }

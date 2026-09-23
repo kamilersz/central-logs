@@ -29,3 +29,48 @@ keep_last = 14
 
 [error_tracking.notify]
 webhooks = ["https://hooks.example.com/..."]
+
+# ── Container/orchestrator integration ─────────────────────────────
+# Push protocols (Docker log drivers + kube-apiserver audit webhook) and
+# built-in pull collectors. See docs/ingestion/containers.md.
+# All disabled by default.
+
+[ingest.gelf]
+enabled = false               # Docker --log-driver=gelf + GELF shippers
+udp_bind = "0.0.0.0:12201"    # "" disables UDP (gzip/zlib + chunked reassembly)
+tcp_bind = "0.0.0.0:12201"    # "" disables TCP (JSON + NUL framing)
+chunk_timeout_secs = 5
+
+[ingest.fluentd]
+enabled = false               # Docker --log-driver=fluentd (msgpack forward)
+tcp_bind = "0.0.0.0:24224"
+ack = true                    # reply {"ack": id} for fluentd-request-ack
+
+[ingest.splunk_hec]
+enabled = false               # Docker --log-driver=splunk + HEC clients
+token = ""                    # optional static token; insert-scoped API keys also work
+
+[ingest.k8s_audit]
+enabled = false               # kube-apiserver --audit-webhook-config-file
+omit_stages = []              # e.g. ["RequestReceived"] to dedup stages
+
+[collector.docker]
+enabled = false               # pull logs from the Docker Engine API
+socket = "unix:///var/run/docker.sock"
+api_version = "v1.41"
+include = []                  # container-name globs, e.g. ["web-*"]
+exclude = []
+refresh_secs = 30
+tail_lines = 0
+
+[collector.kubernetes]
+enabled = false               # pull pod logs from the Kubernetes API
+api_url = "https://kubernetes.default.svc"
+token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+# token = ""                  # literal token (alternative to token_file)
+# insecure_tls = false
+namespaces = []               # [] = all namespaces
+label_selector = ""           # e.g. "app=web"
+refresh_secs = 30
+tail_lines = 0

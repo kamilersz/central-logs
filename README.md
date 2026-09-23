@@ -36,7 +36,11 @@ cargo build --release
 ```
 
 The server listens on `:8080` (HTTP API + dashboard) and `:5140` (syslog
-UDP+TCP), writing data under `./data/`. On first run it prints a one-time
+UDP+TCP), writing data under `./data/`. Containers and clusters can ship
+natively too: Docker's `gelf`/`fluentd`/`splunk` log drivers, the
+kube-apiserver audit webhook, or the built-in Docker/Kubernetes pull
+collectors — see
+[docs/ingestion/containers.md](docs/ingestion/containers.md). On first run it prints a one-time
 admin token (or set `CENTRAL_LOGS_HTTP_API_KEY` yourself) — see
 [docs/SECURITY.md](docs/SECURITY.md).
 

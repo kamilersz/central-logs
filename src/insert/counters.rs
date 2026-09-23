@@ -37,19 +37,28 @@ impl InsertCountersRef {
     }
 
     pub fn record(&self, proto: Protocol, bytes: usize) {
+        self.record_n(proto, 1, bytes as u64);
+    }
+
+    /// Batch form: count `n` records totalling `bytes` bytes in one lock.
+    pub fn record_n(&self, proto: Protocol, n: usize, bytes: u64) {
         let mut c = self.inner.lock();
-        c.records_total += 1;
-        c.bytes_total += bytes as u64;
+        c.records_total += n as u64;
+        c.bytes_total += bytes;
         let entry = c.per_protocol.entry(proto.as_str()).or_default();
-        entry.records += 1;
-        entry.bytes += bytes as u64;
+        entry.records += n as u64;
+        entry.bytes += bytes;
     }
 
     pub fn record_error(&self, proto: Protocol) {
+        self.record_error_n(proto, 1);
+    }
+
+    pub fn record_error_n(&self, proto: Protocol, n: usize) {
         let mut c = self.inner.lock();
-        c.errors_total += 1;
+        c.errors_total += n as u64;
         let entry = c.per_protocol.entry(proto.as_str()).or_default();
-        entry.errors += 1;
+        entry.errors += n as u64;
     }
 
     /// Count a dropped self-audit event (WAL channel saturated).

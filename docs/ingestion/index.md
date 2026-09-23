@@ -9,6 +9,7 @@ matches how your apps emit data — most apps only need one.
 | [OpenTelemetry OTLP/HTTP](otlp.md) | Apps already instrumented with an OTel SDK — zero source-side changes. | `POST /v1/traces`, `/v1/logs`, `/v1/metrics` |
 | [Syslog](syslog.md) | Routers, firewalls, OS daemons, anything that already speaks syslog. | UDP/TCP on `:5140` |
 | [Sentry SDK](sentry.md) | Existing Sentry SDKs in any language — point them at central-logs, get fingerprint grouping, stack sampling, error notifications. | `/api/{project}/envelope/` and `/store/` |
+| [Docker Engine & Kubernetes](containers.md) | Container logs via Docker's `gelf`/`fluentd`/`splunk` drivers, `kube-apiserver` audit webhooks, or the built-in pull collectors. | `:12201`, `:24224`, `/services/collector/event/1.0`, `/ingest/kubernetes/audit` |
 
 All paths share the same durable insert layer: the request is acked
 only after the WAL is **fsync'd**, then parsing/enrichment happens
@@ -43,7 +44,7 @@ anything else. The full schema is in [HTTP API](../API.md).
 | `trace_id` / `span_id` | optional | OTel spans or app-supplied |
 | `duration_ms` | optional | feeds the latency p50/p95/p99 dashboards |
 | `attributes.*` | optional | app-supplied; queryable via the [filter DSL](../query.md) |
-| `protocol` | auto | `http_json` / `syslog_udp` / `syslog_tcp` / `otlp_log` / `otlp_span` / `otlp_metric` / `sentry` |
+| `protocol` | auto | `http_json` / `syslog_udp` / `syslog_tcp` / `otlp_log` / `otlp_span` / `otlp_metric` / `sentry` / `gelf` / `fluentd` / `splunk_hec` / `k8s_audit` / `docker_api` / `k8s_api` |
 
 `duration_ms` is the only "magic" field: any log line that carries it
 participates in the latency dashboards.
@@ -79,3 +80,4 @@ Removing it early is cheaper than storing it and never using it.
 - [OpenTelemetry OTLP/HTTP →](otlp.md)
 - [Syslog →](syslog.md)
 - [Sentry SDK →](sentry.md)
+- [Docker Engine & Kubernetes →](containers.md)

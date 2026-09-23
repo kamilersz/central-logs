@@ -33,8 +33,10 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["http2", "macros", "ws"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["trace", "cors", "compression-gzip", "decompression-gzip", "fs", "limit"] }
-hyper = { version = "1", features = ["http1", "http2"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper = { version = "1", features = ["http1", "http2", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
+# Empty request bodies for the Docker Engine API collector's hyper client.
+http-body-util = "0.1"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }

@@ -400,3 +400,15 @@ curl -sf "$BASE/api/logs?filter=service:my-app&window=1h" \
 >   SHA-256 hash), so a data-dir reset invalidates it. Delete the
 >   `MY_APP_INSERT_KEY=` line from `.env` first, then re-run so Step 3 mints
 >   a fresh key.
+
+---
+
+## Onboarding containers & Kubernetes
+
+Docker containers, Docker log drivers, and Kubernetes clusters have their
+own native ingest paths — GELF / Fluentd-forward / Splunk-HEC log drivers,
+the kube-apiserver audit webhook, and two built-in pull collectors
+(Docker Engine API, Kubernetes API). They follow the same
+key-and-verify pattern as above but skip the HTTP client step.
+
+Full runbooks: **[docs/ingestion/containers.md](docs/ingestion/containers.md)**.

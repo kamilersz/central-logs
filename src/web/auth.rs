@@ -433,9 +433,13 @@ pub async fn require_auth(State(st): State<AuthState>, req: Request, next: Next)
     if is_public_path(&path) {
         return next.run(req).await;
     }
-    // CORS preflight for the Sentry-SDK ingest endpoints: browsers don't
-    // send credentials on preflights, so these must answer without auth.
-    if req.method() == axum::http::Method::OPTIONS && is_sentry_ingest_path(&path) {
+    // CORS/preflight for agent-less SDK & driver ingest endpoints: browsers
+    // don't send credentials on preflights, and Docker's splunk driver uses
+    // OPTIONS as its connection verification (splunk-verify-connection), so
+    // both must answer without auth.
+    if req.method() == axum::http::Method::OPTIONS
+        && (is_sentry_ingest_path(&path) || is_hec_ingest_path(&path))
+    {
         return next.run(req).await;
     }
     let Some(info) = st.resolve(&req) else {
@@ -469,6 +473,14 @@ pub fn is_sentry_ingest_path(path: &str) -> bool {
         && segs.next().is_none()
 }
 
+/// True for the Splunk-HEC-compatible ingest routes
+/// (`/services/collector/event[/1.0]`) — Docker Engine's `splunk` log
+/// driver posts here (docs/ingestion/containers.md).
+pub fn is_hec_ingest_path(path: &str) -> bool {
+    let p = path.trim_end_matches('/');
+    p == "/services/collector/event" || p == "/services/collector/event/1.0"
+}
+
 /// Decide which scope a (method, path) requires. `None` = any authenticated
 /// identity is acceptable. This is the single source of truth for the
 /// authorization policy — audit it when changing routes.
@@ -481,6 +493,14 @@ pub fn required_scope(method: &axum::http::Method, path: &str) -> Option<Scope> 
     // insert-scoped key must be supplied by the SDK, e.g.
     // `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer clk_..."`.
     if path == "/v1/traces" || path == "/v1/metrics" {
+        return Some(Scope::Insert);
+    }
+    // Container/orchestrator push protocols — same trust level as /v1/logs:
+    // Splunk HEC (Docker `splunk` driver) and the Kubernetes audit webhook.
+    if is_hec_ingest_path(path)
+        || path.starts_with("/services/collector/")
+        || path.starts_with("/ingest/kubernetes/")
+    {
         return Some(Scope::Insert);
     }
     // Sentry-SDK ingest: writing errors, same trust level as /v1/logs.
@@ -576,6 +596,10 @@ pub fn is_public_path(path: &str) -> bool {
     // `/login`. The login page itself + the login-submit endpoint + the
     // health check are the only unauthenticated surfaces.
     matches!(p, "/login" | "/health" | "/api/auth/login")
+        // HEC health probe (GET; leaks nothing but liveness) — Docker/HEC
+        // clients and load balancers check it without credentials.
+        || p == "/services/collector/health"
+        || p == "/services/collector/health/1.0"
 }
 
 // =====================================================================
@@ -598,19 +622,23 @@ fn cookie_session(req: &Request) -> Option<String> {
 }
 
 /// Pull the candidate token out of `Authorization: Bearer <k>` (case-insensitive
-/// scheme) or `X-API-Key: <k>`. Returns the raw key string.
+/// scheme), `Authorization: Splunk <k>` (the Docker `splunk` log driver's
+/// HEC credential form), or `X-API-Key: <k>`. Returns the raw key string.
 fn bearer_or_x_api_key(req: &Request) -> Option<String> {
     const BEARER_PREFIX: &str = "bearer "; // 7 ASCII bytes
+    const SPLUNK_PREFIX: &str = "splunk "; // 7 ASCII bytes
     if let Some(h) = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
     {
-        if h.to_ascii_lowercase().starts_with(BEARER_PREFIX) {
-            // SAFE: prefix is 7 ASCII bytes, all valid UTF-8 char boundaries.
-            let token = h[BEARER_PREFIX.len()..].trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
+        for prefix in [BEARER_PREFIX, SPLUNK_PREFIX] {
+            if h.len() > prefix.len() && h[..prefix.len()].eq_ignore_ascii_case(prefix) {
+                // SAFE: prefix is 7 ASCII bytes, all valid UTF-8 char boundaries.
+                let token = h[prefix.len()..].trim();
+                if !token.is_empty() {
+                    return Some(token.to_string());
+                }
             }
         }
     }

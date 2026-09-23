@@ -70,6 +70,7 @@ nav:
           - ingestion/otlp.md
           - ingestion/syslog.md
           - ingestion/sentry.md
+          - ingestion/containers.md
       - Query: query.md
       - Dashboards: dashboards.md
       - Alerts: alerts.md
