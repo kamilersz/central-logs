@@ -25,13 +25,13 @@ export default function DashboardsPage() {
         <div className="flex gap-2">
           <Link
             to="/dashboards/ai"
-            className="px-3 py-1.5 rounded border border-tremor-border dark:border-dark-tremor-border text-sm hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
+            className="px-3 py-1.5 rounded-md border border-tremor-border dark:border-dark-tremor-border text-sm hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
           >
             ✦ Build with AI
           </Link>
           <Link
             to="/dashboards/new"
-            className="px-3 py-1.5 rounded bg-tremor-brand text-white text-sm hover:opacity-90"
+            className="px-3 py-1.5 rounded-md bg-tremor-brand text-white text-sm hover:opacity-90"
           >
             + New Dashboard
           </Link>
@@ -44,7 +44,7 @@ export default function DashboardsPage() {
           <Link
             key={p.path}
             to={`/dashboards/${p.path}`}
-            className="block p-4 rounded border border-tremor-border dark:border-dark-tremor-border hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
+            className="block p-4 cl-card hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
           >
             <div className="font-medium">{p.title}</div>
             <div className="text-xs text-tremor-content-subtle mt-1">{p.desc}</div>
@@ -59,7 +59,7 @@ export default function DashboardsPage() {
           <Link
             key={d.id}
             to={`/dashboards/view/${d.id}`}
-            className="block p-4 rounded border border-tremor-border dark:border-dark-tremor-border hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
+            className="block p-4 cl-card hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
           >
             <div className="font-medium">{d.name}</div>
             {d.description && (

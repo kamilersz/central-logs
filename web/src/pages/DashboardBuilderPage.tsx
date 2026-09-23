@@ -24,7 +24,7 @@ const VIZ_TYPES: { value: PanelViz; label: string }[] = [
 const WIDTHS = [2, 3, 4, 6, 8, 12];
 
 const inputCls =
-  "mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm";
+  "mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm";
 
 type EditablePanel = Panel & { id: string };
 
@@ -178,21 +178,21 @@ export default function DashboardBuilderPage() {
         <div className="flex gap-2">
           <button
             onClick={() => navigate(-1)}
-            className="px-3 py-1.5 rounded text-sm border border-tremor-border dark:border-dark-tremor-border"
+            className="px-3 py-1.5 rounded-md text-sm border border-tremor-border dark:border-dark-tremor-border"
           >
             Cancel
           </button>
           <button
             onClick={save}
             disabled={saving || !name}
-            className="px-3 py-1.5 rounded text-sm bg-tremor-brand text-white disabled:opacity-50"
+            className="px-3 py-1.5 rounded-md text-sm bg-tremor-brand text-white disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save"}
           </button>
         </div>
       </div>
 
-      {error && <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-800 rounded text-sm">{error}</div>}
+      {error && <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-800 rounded-md text-sm">{error}</div>}
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div>
@@ -220,7 +220,7 @@ export default function DashboardBuilderPage() {
       {/* Modify with AI — works on the current panel list, in place.
           When the assistant asks clarifying questions, they appear here so
           the user can answer + re-submit without leaving the editor. */}
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border mb-6 bg-tremor-background-muted dark:bg-dark-tremor-background-muted">
+      <div className="p-4 cl-card mb-6 bg-tremor-background-muted dark:bg-dark-tremor-background-muted">
         <label className="text-xs text-tremor-content-subtle">Modify with AI</label>
         <div className="flex gap-2 mt-1">
           <input
@@ -228,7 +228,7 @@ export default function DashboardBuilderPage() {
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
             placeholder='e.g. "add a p95 latency panel for telegram-bot, make the error panels big numbers, reorder latency first"'
-            className="flex-1 px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm"
+            className="flex-1 px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm"
           />
           <button
             onClick={modifyWithAi}
@@ -238,7 +238,7 @@ export default function DashboardBuilderPage() {
               (aiQuestions.length > 0 &&
                 aiQuestions.some((q) => !(aiAnswers[q.id] ?? "").trim()))
             }
-            className="px-3 py-1.5 rounded text-sm border border-tremor-brand text-tremor-brand dark:text-dark-tremor-brand disabled:opacity-50 whitespace-nowrap"
+            className="px-3 py-1.5 rounded-md text-sm border border-tremor-brand text-tremor-brand dark:text-dark-tremor-brand disabled:opacity-50 whitespace-nowrap"
           >
             {aiBusy ? "Applying…" : aiQuestions.length > 0 ? "Apply with answers" : "Apply"}
           </button>
@@ -256,7 +256,7 @@ export default function DashboardBuilderPage() {
                         key={c}
                         type="button"
                         onClick={() => setAiAnswers((a) => ({ ...a, [q.id]: c }))}
-                        className={`px-2.5 py-1 rounded text-xs border ${
+                        className={`px-2.5 py-1 rounded-md text-xs border ${
                           aiAnswers[q.id] === c
                             ? "border-tremor-brand bg-tremor-brand-faint dark:bg-dark-tremor-brand-faint text-tremor-brand dark:text-dark-tremor-brand"
                             : "border-tremor-border dark:border-dark-tremor-border"
@@ -276,7 +276,7 @@ export default function DashboardBuilderPage() {
                       onChange={(e) =>
                         setAiAnswers((a) => ({ ...a, [q.id]: e.target.value }))
                       }
-                      className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm min-w-[160px]"
+                      className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm min-w-[160px]"
                     />
                   </div>
                 ) : (
@@ -287,7 +287,7 @@ export default function DashboardBuilderPage() {
                       setAiAnswers((a) => ({ ...a, [q.id]: e.target.value }))
                     }
                     placeholder="your answer…"
-                    className="mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm"
+                    className="mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm"
                   />
                 )}
               </div>
@@ -300,14 +300,14 @@ export default function DashboardBuilderPage() {
         {panels.map((p, i) => (
           <div
             key={p.id}
-            className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border"
+            className="p-4 cl-card"
           >
             <div className="grid grid-cols-12 gap-3 items-end">
               <div className="col-span-1 flex flex-col gap-1">
                 <button
                   onClick={() => move(p.id, -1)}
                   disabled={i === 0}
-                  className="px-2 py-0.5 rounded text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
+                  className="px-2 py-0.5 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
                   title="Move up"
                 >
                   ↑
@@ -315,7 +315,7 @@ export default function DashboardBuilderPage() {
                 <button
                   onClick={() => move(p.id, 1)}
                   disabled={i === panels.length - 1}
-                  className="px-2 py-0.5 rounded text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
+                  className="px-2 py-0.5 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
                   title="Move down"
                 >
                   ↓
@@ -425,7 +425,7 @@ export default function DashboardBuilderPage() {
                 <button
                   onClick={() => remove(p.id)}
                   disabled={panels.length === 1}
-                  className="mt-1 px-2 py-1.5 rounded text-xs border border-tremor-border dark:border-dark-tremor-border w-full disabled:opacity-40"
+                  className="mt-1 px-2 py-1.5 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border w-full disabled:opacity-40"
                   title="Remove panel"
                 >
                   ×
@@ -438,7 +438,7 @@ export default function DashboardBuilderPage() {
 
       <button
         onClick={addPanel}
-        className="mt-3 px-3 py-1.5 rounded text-sm border border-dashed border-tremor-border dark:border-dark-tremor-border w-full hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
+        className="mt-3 px-3 py-1.5 rounded-md text-sm border border-dashed border-tremor-border dark:border-dark-tremor-border w-full hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
       >
         + Add panel
       </button>

@@ -56,7 +56,7 @@ export default function DashboardViewerPage() {
         </div>
         <Link
           to={`/dashboards/edit/${dash.id}`}
-          className="px-3 py-1.5 rounded text-sm border border-tremor-border dark:border-dark-tremor-border"
+          className="px-3 py-1.5 rounded-md text-sm border border-tremor-border dark:border-dark-tremor-border"
         >
           Edit
         </Link>

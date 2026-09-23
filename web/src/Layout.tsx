@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { api, type PipelineStatus, WhoamiResponse } from "./api";
 import { usePoll } from "./components";
@@ -15,9 +15,10 @@ interface LayoutProps {
  *
  *  Three values, left → right:
  *    • logs/m     — records ingested over the trailing 60s
- *    • Queue: X% (N / M rows)  — insert-channel fill + absolute depth
- *    • Services: N            — distinct services in last 24h
- *      (hover title shows the full "Active services (24h)" label)
+ *    • Queue      — link to /pipeline (clicking opens the pipeline page);
+ *                   shows fill % + absolute depth (rows). Color-coded.
+ *    • Services   — distinct services in last 24h; the full
+ *                   "Active services (24h)" label appears on hover.
  */
 function HeaderStatus() {
   const { data } = usePoll<PipelineStatus>(() => api.pipeline(), 10_000, []);
@@ -59,10 +60,14 @@ function HeaderStatus() {
       <span className="text-tremor-content-emphasis dark:text-dark-tremor-content-emphasis">
         {lpmLabel} logs/m
       </span>
-      <span className={fillColor}>
+      <Link
+        to="/pipeline"
+        className={`${fillColor} hover:underline underline-offset-2`}
+        title="Open the pipeline view"
+      >
         Queue: {fillPct.toFixed(0)}% ({formatRows(queueDepth)} /{" "}
         {formatRows(queueCap)})
-      </span>
+      </Link>
       <span
         className="text-tremor-content-emphasis dark:text-dark-tremor-content-emphasis"
         title="Active services (24h) — distinct services seen in the last 24h"
@@ -205,7 +210,6 @@ export default function Layout({ whoami }: LayoutProps) {
     { to: "/errors", label: "Errors" },
     { to: "/dashboards", label: "Dashboards" },
     { to: "/alerts", label: "Alerts" },
-    { to: "/pipeline", label: "Pipeline" },
     { to: "/storage", label: "Storage" },
     ...(isAdmin ? [{ to: "/api-keys", label: "API Keys" }] : []),
   ];

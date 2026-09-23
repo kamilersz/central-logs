@@ -36,7 +36,7 @@ export default function PresetLatencyPage() {
         <select
           value={metric}
           onChange={(e) => setMetric(e.target.value as "p50" | "p95" | "p99")}
-          className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm"
+          className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm"
         >
           <option value="p50">p50</option>
           <option value="p95">p95</option>
@@ -47,12 +47,12 @@ export default function PresetLatencyPage() {
 
       {error && <div className="mb-3 text-red-600 text-sm">{error}</div>}
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+      <div className="p-4 cl-card">
         <div className="text-sm font-medium mb-2">{metric} per service (ms)</div>
         <LineChart series={series} height={280} yLabel="ms" />
       </div>
 
-      <div className="mt-4 p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+      <div className="mt-4 p-4 cl-card">
         <div className="text-sm font-medium mb-2">Per-service summary</div>
         <table className="w-full text-sm">
           <thead>

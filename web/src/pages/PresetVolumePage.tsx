@@ -47,7 +47,7 @@ export default function PresetVolumePage() {
       {fcErr && <div className="mb-3 text-xs text-amber-600">forecast unavailable: {fcErr}</div>}
       {volErr && <div className="mb-3 text-xs text-red-600">{volErr}</div>}
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border mb-4">
+      <div className="p-4 cl-card mb-4">
         <div className="text-sm font-medium mb-2">History + forecast (dashed, with 95% band)</div>
         <LineChart
           series={[
@@ -61,7 +61,7 @@ export default function PresetVolumePage() {
         />
       </div>
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+      <div className="p-4 cl-card">
         <div className="text-sm font-medium mb-2">Recent volume</div>
         <AreaChart points={histPoints} color="#5b8dff" height={220} />
       </div>
@@ -77,7 +77,7 @@ function fmtRate(n: number): string {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+    <div className="p-4 cl-card">
       <div className="text-xs text-tremor-content-subtle">{label}</div>
       <div className="text-xl font-semibold mt-1 truncate">{value}</div>
     </div>

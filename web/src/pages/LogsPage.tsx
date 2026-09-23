@@ -234,7 +234,7 @@ export default function LogsPage() {
                 <button
                   key={s}
                   onClick={() => setFilter((f) => `${f} ${s}:`.trim())}
-                  className="cl-mono text-[11px] px-2 py-0.5 bg-tremor-background-muted dark:bg-dark-tremor-background-muted rounded border border-tremor-border dark:border-dark-tremor-border text-tremor-content-subtle dark:text-dark-tremor-content-subtle hover:border-tremor-brand dark:hover:border-dark-tremor-brand hover:text-tremor-brand dark:hover:text-dark-tremor-brand transition-colors"
+                  className="cl-mono text-[11px] px-2 py-0.5 bg-tremor-background-muted dark:bg-dark-tremor-background-muted rounded-md border border-tremor-border dark:border-dark-tremor-border text-tremor-content-subtle dark:text-dark-tremor-content-subtle hover:border-tremor-brand dark:hover:border-dark-tremor-brand hover:text-tremor-brand dark:hover:text-dark-tremor-brand transition-colors"
                 >
                   {s}
                 </button>
@@ -437,7 +437,7 @@ function LogDetail({ row }: { row: LogRow }) {
       </div>
       <div>
         <Muted className="text-xs">attributes (JSON residue)</Muted>
-        <pre className="mt-2 text-xs overflow-auto max-h-48 bg-tremor-background dark:bg-dark-tremor-background p-2 rounded">
+        <pre className="mt-2 text-xs overflow-auto max-h-48 bg-tremor-background dark:bg-dark-tremor-background p-2 rounded-md">
           {JSON.stringify(row.attributes ?? {}, null, 2)}
         </pre>
       </div>

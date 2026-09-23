@@ -255,7 +255,7 @@ function RuleBuilder({
   }
 
   const inputCls =
-    "mt-1 w-full px-3 py-2 text-sm bg-tremor-background-muted dark:bg-dark-tremor-background-muted border border-tremor-border dark:border-dark-tremor-border rounded-md text-tremor-content-strong dark:text-dark-tremor-content-strong focus:border-tremor-brand dark:focus:border-dark-tremor-brand";
+    "mt-1 w-full cl-input"
 
   return (
     <Card>
@@ -521,7 +521,7 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
   }
 
   const inputCls =
-    "mt-1 w-full px-3 py-2 text-sm bg-tremor-background-muted dark:bg-dark-tremor-background-muted border border-tremor-border dark:border-dark-tremor-border rounded-md text-tremor-content-strong dark:text-dark-tremor-content-strong";
+    "mt-1 w-full cl-input"
 
   return (
     <Card className="xl:sticky xl:top-20">
@@ -574,7 +574,7 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
                     type="button"
                     onClick={() => test(c.id)}
                     disabled={testingId === c.id}
-                    className="px-2 py-0.5 rounded text-[11px] border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand disabled:opacity-50"
+                    className="px-2 py-0.5 rounded-md text-[11px] border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand disabled:opacity-50"
                   >
                     {testingId === c.id ? "testing…" : "test"}
                   </button>
@@ -582,7 +582,7 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
                     <button
                       type="button"
                       onClick={() => startEdit(c)}
-                      className="px-2 py-0.5 rounded text-[11px] border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand"
+                      className="px-2 py-0.5 rounded-md text-[11px] border border-tremor-border dark:border-dark-tremor-border hover:border-tremor-brand dark:hover:border-dark-tremor-brand"
                     >
                       edit
                     </button>
@@ -590,7 +590,7 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
                 <button
                   type="button"
                   onClick={() => remove(c.id)}
-                  className="px-2 py-0.5 rounded text-[11px] text-red-400 border border-red-500/25 hover:bg-red-500/10"
+                  className="px-2 py-0.5 rounded-md text-[11px] text-red-400 border border-red-500/25 hover:bg-red-500/10"
                 >
                   delete
                 </button>
@@ -747,7 +747,7 @@ function RuleRow({
             <summary className="text-xs text-tremor-content-subtle dark:text-dark-tremor-content-subtle cursor-pointer">
               condition
             </summary>
-            <pre className="cl-mono mt-1 text-xs p-2 bg-tremor-background-muted dark:bg-dark-tremor-background-muted rounded overflow-auto">
+            <pre className="cl-mono mt-1 text-xs p-2 bg-tremor-background-muted dark:bg-dark-tremor-background-muted rounded-md overflow-auto">
               {condStr}
             </pre>
           </details>

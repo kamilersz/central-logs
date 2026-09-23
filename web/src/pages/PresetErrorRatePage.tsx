@@ -30,12 +30,12 @@ export default function PresetErrorRatePage() {
 
       {error && <div className="mb-3 text-red-600 text-sm">{error}</div>}
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border mb-4">
+      <div className="p-4 cl-card mb-4">
         <div className="text-sm font-medium mb-2">Error count per bucket</div>
         <AreaChart points={errPoints} color="#ef4444" height={240} />
       </div>
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+      <div className="p-4 cl-card">
         <div className="text-sm font-medium mb-2">Error rate (%) per bucket</div>
         <LineChart
           series={[{ name: "error %", color: "#f59e0b", points: ratePoints }]}
@@ -49,7 +49,7 @@ export default function PresetErrorRatePage() {
 
 function Stat({ label, value, color = "" }: { label: string; value: string; color?: string }) {
   return (
-    <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+    <div className="p-4 cl-card">
       <div className="text-xs text-tremor-content-subtle">{label}</div>
       <div className={`text-xl font-semibold mt-1 ${color}`}>{value}</div>
     </div>

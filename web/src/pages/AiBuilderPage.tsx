@@ -141,22 +141,22 @@ export default function AiBuilderPage() {
         </div>
       </div>
 
-      {error && <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-800 rounded text-sm">{error}</div>}
+      {error && <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-800 rounded-md text-sm">{error}</div>}
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border mb-4">
+      <div className="p-4 cl-card mb-4">
         <label className="text-xs text-tremor-content-subtle">What do you want to see?</label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={3}
           placeholder='e.g. "Ops view for the telegram-bot: traffic, error rate over the last day, and p95 latency"'
-          className="mt-1 w-full px-3 py-2 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm"
+          className="mt-1 w-full px-3 py-2 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm"
         />
         <div className="flex items-center gap-3 mt-3">
           <button
             onClick={generate}
             disabled={!canGenerate}
-            className="px-3 py-1.5 rounded text-sm bg-tremor-brand text-white disabled:opacity-50"
+            className="px-3 py-1.5 rounded-md text-sm bg-tremor-brand text-white disabled:opacity-50"
           >
             {busy ? "Thinking…" : questions.length > 0 ? "Generate dashboard" : "Start"}
           </button>
@@ -170,7 +170,7 @@ export default function AiBuilderPage() {
       </div>
 
       {questions.length > 0 && (
-        <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border mb-4 space-y-4">
+        <div className="p-4 cl-card mb-4 space-y-4">
           <div className="text-sm font-medium">A few questions to sharpen the design:</div>
           {questions.map((q) => (
             <div key={q.id}>
@@ -181,7 +181,7 @@ export default function AiBuilderPage() {
                     <button
                       key={c}
                       onClick={() => setAnswers((a) => ({ ...a, [q.id]: c }))}
-                      className={`px-3 py-1.5 rounded text-sm border ${
+                      className={`px-3 py-1.5 rounded-md text-sm border ${
                         answers[q.id] === c
                           ? "border-tremor-brand bg-tremor-brand-faint dark:bg-dark-tremor-brand-faint text-tremor-brand dark:text-dark-tremor-brand"
                           : "border-tremor-border dark:border-dark-tremor-border"
@@ -195,7 +195,7 @@ export default function AiBuilderPage() {
                     placeholder="or type your own…"
                     value={answers[q.id] && !q.choices.includes(answers[q.id]) ? answers[q.id] : ""}
                     onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-                    className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm min-w-[180px]"
+                    className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm min-w-[180px]"
                   />
                 </div>
               ) : (
@@ -204,7 +204,7 @@ export default function AiBuilderPage() {
                   value={answers[q.id] ?? ""}
                   onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
                   placeholder="your answer…"
-                  className="mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm"
+                  className="mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm"
                 />
               )}
             </div>
@@ -228,7 +228,7 @@ export default function AiBuilderPage() {
                   setQuestions([]);
                   setAnswers({});
                 }}
-                className="px-3 py-1.5 rounded text-sm border border-tremor-border dark:border-dark-tremor-border"
+                className="px-3 py-1.5 rounded-md text-sm border border-tremor-border dark:border-dark-tremor-border"
                 disabled={saving}
               >
                 Start over
@@ -236,7 +236,7 @@ export default function AiBuilderPage() {
               <button
                 onClick={save}
                 disabled={saving}
-                className="px-3 py-1.5 rounded text-sm bg-tremor-brand text-white disabled:opacity-50"
+                className="px-3 py-1.5 rounded-md text-sm bg-tremor-brand text-white disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save dashboard"}
               </button>
@@ -250,7 +250,7 @@ export default function AiBuilderPage() {
 
           {/* Refinement loop: ask for the missing details, or answer the
               clarifying questions the assistant raised on the last refine. */}
-          <div className="mt-4 p-4 rounded border border-tremor-border dark:border-dark-tremor-border bg-tremor-background-muted dark:bg-dark-tremor-background-muted">
+          <div className="mt-4 p-4 cl-card bg-tremor-background-muted dark:bg-dark-tremor-background-muted">
             <label className="text-xs text-tremor-content-subtle">
               {refineQuestions.length > 0
                 ? "Answer the questions, then refine"
@@ -265,12 +265,12 @@ export default function AiBuilderPage() {
                   if (e.key === "Enter" && canRefine()) applyRefine();
                 }}
                 placeholder='e.g. "add a big number for failed checkouts", "make latency 12 wide and move it first"'
-                className="flex-1 px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm"
+                className="flex-1 px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm"
               />
               <button
                 onClick={applyRefine}
                 disabled={!canRefine()}
-                className="px-3 py-1.5 rounded text-sm border border-tremor-brand text-tremor-brand dark:text-dark-tremor-brand disabled:opacity-50 whitespace-nowrap"
+                className="px-3 py-1.5 rounded-md text-sm border border-tremor-brand text-tremor-brand dark:text-dark-tremor-brand disabled:opacity-50 whitespace-nowrap"
               >
                 {refineBusy ? "Refining…" : "Refine"}
               </button>
@@ -289,7 +289,7 @@ export default function AiBuilderPage() {
                             onClick={() =>
                               setRefineAnswers((a) => ({ ...a, [q.id]: c }))
                             }
-                            className={`px-2.5 py-1 rounded text-xs border ${
+                            className={`px-2.5 py-1 rounded-md text-xs border ${
                               refineAnswers[q.id] === c
                                 ? "border-tremor-brand bg-tremor-brand-faint dark:bg-dark-tremor-brand-faint text-tremor-brand dark:text-dark-tremor-brand"
                                 : "border-tremor-border dark:border-dark-tremor-border"
@@ -309,7 +309,7 @@ export default function AiBuilderPage() {
                           onChange={(e) =>
                             setRefineAnswers((a) => ({ ...a, [q.id]: e.target.value }))
                           }
-                          className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm min-w-[160px]"
+                          className="px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm min-w-[160px]"
                         />
                       </div>
                     ) : (
@@ -320,7 +320,7 @@ export default function AiBuilderPage() {
                           setRefineAnswers((a) => ({ ...a, [q.id]: e.target.value }))
                         }
                         placeholder="your answer…"
-                        className="mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm"
+                        className="mt-1 w-full px-2 py-1.5 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded-md text-sm"
                       />
                     )}
                   </div>

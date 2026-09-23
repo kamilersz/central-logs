@@ -91,17 +91,17 @@ export default function ApiKeysPage() {
       </div>
 
       {error && (
-        <div className="p-3 rounded border border-red-500/40 bg-red-500/10 text-sm text-red-500">
+        <div className="p-3 rounded-md border border-red-500/40 bg-red-500/10 text-sm text-red-500">
           {error}
         </div>
       )}
 
       {created && (
-        <div className="p-4 rounded border border-amber-500/50 bg-amber-500/10">
+        <div className="p-4 rounded-md border border-amber-500/50 bg-amber-500/10">
           <div className="font-semibold text-amber-600 dark:text-amber-400 mb-1">
             Copy this key now — it will not be shown again.
           </div>
-          <code className="block font-mono text-sm bg-tremor-background-muted dark:bg-dark-tremor-background-muted p-2 rounded break-all">
+          <code className="block font-mono text-sm bg-tremor-background-muted dark:bg-dark-tremor-background-muted p-2 rounded-md break-all">
             {created.key}
           </code>
           <div className="text-xs text-tremor-content-subtle dark:text-dark-tremor-content-subtle mt-2">
@@ -110,21 +110,21 @@ export default function ApiKeysPage() {
           <button
             type="button"
             onClick={() => navigator.clipboard.writeText(created.key)}
-            className="mt-2 px-2.5 py-1 rounded text-sm border border-tremor-border dark:border-dark-tremor-border hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
+            className="mt-2 px-2.5 py-1 rounded-md text-sm border border-tremor-border dark:border-dark-tremor-border hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
           >
             Copy
           </button>
           <button
             type="button"
             onClick={() => setCreated(null)}
-            className="ml-2 mt-2 px-2.5 py-1 rounded text-sm border border-tremor-border dark:border-dark-tremor-border hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
+            className="ml-2 mt-2 px-2.5 py-1 rounded-md text-sm border border-tremor-border dark:border-dark-tremor-border hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      <form onSubmit={onCreate} className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border space-y-3">
+      <form onSubmit={onCreate} className="p-4 cl-card space-y-3">
         <div className="text-sm font-medium">Create new key</div>
         <div className="flex flex-wrap gap-3 items-end">
           <label className="flex-1 min-w-[200px]">
@@ -137,7 +137,7 @@ export default function ApiKeysPage() {
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. api-shipper-prod"
               maxLength={128}
-              className="w-full px-2.5 py-1.5 rounded text-sm bg-transparent border border-tremor-border dark:border-dark-tremor-border"
+              className="w-full px-2.5 py-1.5 rounded-md text-sm bg-transparent border border-tremor-border dark:border-dark-tremor-border"
             />
           </label>
           <div>
@@ -159,7 +159,7 @@ export default function ApiKeysPage() {
           </div>
           <button
             type="submit"
-            className="px-3 py-1.5 rounded text-sm bg-tremor-brand dark:bg-dark-tremor-brand text-white"
+            className="px-3 py-1.5 rounded-md text-sm bg-tremor-brand dark:bg-dark-tremor-brand text-white"
           >
             Generate
           </button>
@@ -204,7 +204,7 @@ export default function ApiKeysPage() {
                     <button
                       type="button"
                       onClick={() => onRevoke(k.id, k.name)}
-                      className="px-2 py-0.5 rounded text-xs border border-red-500/40 text-red-500 hover:bg-red-500/10"
+                      className="px-2 py-0.5 rounded-md text-xs border border-red-500/40 text-red-500 hover:bg-red-500/10"
                     >
                       Revoke
                     </button>

@@ -53,11 +53,11 @@ export default function PipelinePage() {
         />
       </div>
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border mb-4">
+      <div className="p-4 cl-card mb-4">
         <div className="text-xs text-tremor-content-subtle mb-2">
           insert → WAL channel fill (sustained 100% means fsync can't keep up; inserts start timing out)
         </div>
-        <div className="h-3 rounded bg-tremor-background-muted dark:bg-dark-tremor-background-muted overflow-hidden">
+        <div className="h-3 rounded-md bg-tremor-background-muted dark:bg-dark-tremor-background-muted overflow-hidden">
           <div
             className={`h-full ${fillColor} transition-all`}
             style={{ width: `${Math.max(fillPct, 1.5)}%` }}
@@ -67,7 +67,7 @@ export default function PipelinePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div
-          className={`p-4 rounded border ${
+          className={`p-4 rounded-md border ${
             drops > 0
               ? "border-red-400 dark:border-red-600"
               : "border-tremor-border dark:border-dark-tremor-border"
@@ -83,7 +83,7 @@ export default function PipelinePage() {
               : "no audit loss — WAL buffering held"}
           </div>
         </div>
-        <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+        <div className="p-4 cl-card">
           <div className="text-xs text-tremor-content-subtle">insert errors (total)</div>
           <div className="text-base font-semibold mt-1">
             {(data?.errors_total ?? 0).toLocaleString()}
@@ -109,7 +109,7 @@ function Stat({
   warn?: boolean;
 }) {
   return (
-    <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+    <div className="p-4 cl-card">
       <div className="text-xs text-tremor-content-subtle">{label}</div>
       <div className={`text-base font-semibold mt-1 ${warn ? "text-yellow-600" : ""}`}>{value}</div>
       {sub && <div className="text-xs text-tremor-content-subtle mt-0.5">{sub}</div>}

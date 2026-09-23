@@ -45,7 +45,7 @@ export default function PresetAnomaliesPage() {
 
       {error && <div className="mb-3 text-red-600 text-sm">{error}</div>}
 
-      <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+      <div className="p-4 cl-card">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-tremor-content-subtle text-xs">
@@ -86,7 +86,7 @@ export default function PresetAnomaliesPage() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="p-4 rounded border border-tremor-border dark:border-dark-tremor-border">
+    <div className="p-4 cl-card">
       <div className="text-xs text-tremor-content-subtle">{label}</div>
       <div className="text-base font-semibold mt-1 truncate" title={value}>{value}</div>
     </div>

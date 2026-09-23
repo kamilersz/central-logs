@@ -827,6 +827,76 @@
     @apply rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300;
   }
 
+  /* ─────────────────────────────────────────────────────────────────────────
+     Design-system primitives — single source of truth for chrome
+     ─────────────────────────────────────────────────────────────────────────
+     Every page-level "card", "input", "select", and "button" in the SPA
+     should resolve through one of the four classes below. Bare `rounded`
+     (4 px) and explicit `rounded-md` (6 px) used to mix arbitrarily
+     across pages — a sweep in PR ... replaced all of those with `cl-card`
+     / `cl-input` / `cl-select` / `cl-btn`, pinning the radius to `rounded-md`
+     (the chosen canonical value) and the border to `var(--cl-border)`
+     (theme-aware). If you need a different look for a one-off widget,
+     compose utilities on top — don't fork these classes.
+
+     Color & background choices:
+       - cl-card     muted bg + 1px border (panel / grouping)
+       - cl-input    slightly raised over cl-card so it pops in forms
+       - cl-select   same surface as cl-input but with the chevron glyph
+       - cl-btn-*    three intents (default, brand, danger) + a ghost
+                     variant for low-emphasis actions
+
+     All four use Tailwind's standard `rounded-md` (6 px). */
+
+  .cl-card {
+    @apply rounded-md border border-tremor-border dark:border-dark-tremor-border
+           bg-tremor-background-muted dark:bg-dark-tremor-background-muted;
+  }
+  .cl-card-plain {
+    @apply rounded-md border border-tremor-border dark:border-dark-tremor-border
+           bg-tremor-background dark:bg-dark-tremor-background;
+  }
+
+  .cl-input {
+    @apply rounded-md border border-tremor-border dark:border-dark-tremor-border
+           bg-tremor-background-muted dark:bg-dark-tremor-background-muted
+           px-3 py-1.5 text-sm text-tremor-content-strong dark:text-dark-tremor-content-strong
+           placeholder:text-tremor-content-subtle dark:placeholder:text-dark-tremor-content-subtle
+           focus:outline-none focus:border-tremor-brand dark:focus:border-dark-tremor-brand
+           focus:ring-2 focus:ring-blue-400/40 dark:focus:ring-blue-400/40
+           transition-colors;
+  }
+  .cl-select {
+    @apply cl-input appearance-none pr-8;
+  }
+
+  .cl-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md
+           border border-tremor-border dark:border-dark-tremor-border
+           px-3 py-1.5 text-sm font-medium
+           text-tremor-content-subtle dark:text-dark-tremor-content-subtle
+           hover:bg-tremor-background-subtle dark:hover:bg-dark-tremor-background-subtle
+           hover:text-tremor-content-strong dark:hover:text-dark-tremor-content-strong
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .cl-btn-brand {
+    @apply cl-btn border-tremor-brand dark:border-dark-tremor-brand
+           bg-tremor-brand dark:bg-dark-tremor-brand
+           text-tremor-brand-inverted hover:opacity-90;
+  }
+  .cl-btn-danger {
+    @apply cl-btn border-red-500/40 text-red-600 dark:text-red-400
+           hover:bg-red-500/10;
+  }
+  .cl-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-md
+           px-2.5 py-1 text-sm
+           text-tremor-content-subtle dark:text-dark-tremor-content-subtle
+           hover:bg-tremor-background-subtle dark:hover:bg-dark-tremor-background-subtle
+           hover:text-tremor-content-strong dark:hover:text-dark-tremor-content-strong
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
   /* Empty / loading states */
   .cl-empty {
     @apply flex flex-col items-center justify-center gap-1 py-14 text-center;
