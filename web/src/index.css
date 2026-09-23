@@ -269,6 +269,412 @@
   --cl-chart-grid: #e0d8c0;
 }
 
+/* Gruvbox Dark — warm browns + mustard + aqua accents. */
+[data-theme="gruvbox-dark"] {
+  --cl-bg: #282828;
+  --cl-bg-muted: #1d2021;
+  --cl-bg-subtle: #32302f;
+  --cl-bg-emphasis: #3c3836;
+  --cl-border: #504945;
+  --cl-ring: rgba(215, 153, 33, 0.4);
+  --cl-content: #d5c4a1;
+  --cl-content-subtle: #a89984;
+  --cl-content-emphasis: #ebdbb2;
+  --cl-content-strong: #fbf1c7;
+  --cl-content-inverted: #282828;
+  --cl-brand: #d79921;
+  --cl-brand-faint: #2f2a1e;
+  --cl-brand-muted: #45402c;
+  --cl-brand-subtle: #8f6f12;
+  --cl-brand-emphasis: #f2c14e;
+  --cl-brand-inverted: #282828;
+  --cl-glow: rgba(215, 153, 33, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(40, 40, 40, 0.92);
+  --cl-selection-bg: rgba(215, 153, 33, 0.32);
+  --cl-selection-fg: #fbf1c7;
+  --cl-focus: rgba(251, 189, 8, 0.55);
+  --cl-scrollbar-thumb: #504945;
+  --cl-chart-grid: #3c3836;
+}
+
+/* Gruvbox Light — same warm family, day side. */
+[data-theme="gruvbox-light"] {
+  --cl-bg: #fbf1c7;
+  --cl-bg-muted: #f2e5bc;
+  --cl-bg-subtle: #ebdbb2;
+  --cl-bg-emphasis: #d5c4a1;
+  --cl-border: #d5c4a1;
+  --cl-ring: rgba(175, 95, 0, 0.35);
+  --cl-content: #5b5348;
+  --cl-content-subtle: #7c6f64;
+  --cl-content-emphasis: #3c3836;
+  --cl-content-strong: #282828;
+  --cl-content-inverted: #fbf1c7;
+  --cl-brand: #af5f00;
+  --cl-brand-faint: #f5dab0;
+  --cl-brand-muted: #e8c889;
+  --cl-brand-subtle: #d79921;
+  --cl-brand-emphasis: #804300;
+  --cl-brand-inverted: #fbf1c7;
+  --cl-glow: rgba(175, 95, 0, 0.22);
+  --cl-shadow: rgba(40, 40, 40, 0.12);
+  --cl-header-bg: rgba(251, 241, 199, 0.92);
+  --cl-selection-bg: rgba(175, 95, 0, 0.22);
+  --cl-selection-fg: #282828;
+  --cl-focus: rgba(175, 95, 0, 0.5);
+  --cl-scrollbar-thumb: #c4b48c;
+  --cl-chart-grid: #e0d3a8;
+}
+
+/* Ayu Dark — teal + amber, code-focused. */
+[data-theme="ayu-dark"] {
+  --cl-bg: #0b0e14;
+  --cl-bg-muted: #0d1015;
+  --cl-bg-subtle: #131721;
+  --cl-bg-emphasis: #1c2027;
+  --cl-border: #2c323d;
+  --cl-ring: rgba(255, 204, 153, 0.4);
+  --cl-content: #b3b3b3;
+  --cl-content-subtle: #6c7380;
+  --cl-content-emphasis: #d4d4d4;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #0b0e14;
+  --cl-brand: #ffcc99;
+  --cl-brand-faint: #2a2218;
+  --cl-brand-muted: #4d3924;
+  --cl-brand-subtle: #a07045;
+  --cl-brand-emphasis: #ffdfb8;
+  --cl-brand-inverted: #0b0e14;
+  --cl-glow: rgba(255, 204, 153, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.6);
+  --cl-header-bg: rgba(11, 14, 20, 0.92);
+  --cl-selection-bg: rgba(255, 204, 153, 0.3);
+  --cl-selection-fg: #ffffff;
+  --cl-focus: rgba(255, 204, 153, 0.6);
+  --cl-scrollbar-thumb: #2c323d;
+  --cl-chart-grid: #1c2027;
+}
+
+/* Ayu Mirage — warm desaturated blue + teal accents. */
+[data-theme="ayu-mirage"] {
+  --cl-bg: #1f2430;
+  --cl-bg-muted: #191e27;
+  --cl-bg-subtle: #252b38;
+  --cl-bg-emphasis: #2f3645;
+  --cl-border: #3a4253;
+  --cl-ring: rgba(95, 175, 200, 0.45);
+  --cl-content: #ccd7e0;
+  --cl-content-subtle: #707a85;
+  --cl-content-emphasis: #e6ecf2;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #1f2430;
+  --cl-brand: #5fafc8;
+  --cl-brand-faint: #1d3540;
+  --cl-brand-muted: #1e4854;
+  --cl-brand-subtle: #3a7a8a;
+  --cl-brand-emphasis: #8ed0e2;
+  --cl-brand-inverted: #1f2430;
+  --cl-glow: rgba(95, 175, 200, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(31, 36, 48, 0.92);
+  --cl-selection-bg: rgba(95, 175, 200, 0.3);
+  --cl-selection-fg: #ffffff;
+  --cl-focus: rgba(95, 175, 200, 0.6);
+  --cl-scrollbar-thumb: #3a4253;
+  --cl-chart-grid: #2f3645;
+}
+
+/* Rose Pine — mauve / pink / gold, muted and warm. */
+[data-theme="rose-pine"] {
+  --cl-bg: #191724;
+  --cl-bg-muted: #1f1d2e;
+  --cl-bg-subtle: #26233a;
+  --cl-bg-emphasis: #2a273f;
+  --cl-border: #393552;
+  --cl-ring: rgba(235, 188, 186, 0.45);
+  --cl-content: #e0def4;
+  --cl-content-subtle: #908caa;
+  --cl-content-emphasis: #f5f5fa;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #191724;
+  --cl-brand: #ebbcba;
+  --cl-brand-faint: #322736;
+  --cl-brand-muted: #4a3343;
+  --cl-brand-subtle: #b07d7b;
+  --cl-brand-emphasis: #f5d4d3;
+  --cl-brand-inverted: #191724;
+  --cl-glow: rgba(235, 188, 186, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.6);
+  --cl-header-bg: rgba(25, 23, 36, 0.92);
+  --cl-selection-bg: rgba(235, 188, 186, 0.32);
+  --cl-selection-fg: #ffffff;
+  --cl-focus: rgba(235, 188, 186, 0.6);
+  --cl-scrollbar-thumb: #393552;
+  --cl-chart-grid: #2a273f;
+}
+
+/* Rose Pine Dawn — pastel daytime counterpart. */
+[data-theme="rose-pine-dawn"] {
+  --cl-bg: #faf4ed;
+  --cl-bg-muted: #f2e9e1;
+  --cl-bg-subtle: #ede4d3;
+  --cl-bg-emphasis: #e8e0d0;
+  --cl-border: #dfd9c2;
+  --cl-ring: rgba(180, 100, 90, 0.4);
+  --cl-content: #575279;
+  --cl-content-subtle: #9893a5;
+  --cl-content-emphasis: #464266;
+  --cl-content-strong: #2a273f;
+  --cl-content-inverted: #faf4ed;
+  --cl-brand: #d7827e;
+  --cl-brand-faint: #f5e4df;
+  --cl-brand-muted: #ebc9c5;
+  --cl-brand-subtle: #d99a96;
+  --cl-brand-emphasis: #b25f5b;
+  --cl-brand-inverted: #faf4ed;
+  --cl-glow: rgba(180, 100, 90, 0.22);
+  --cl-shadow: rgba(42, 39, 63, 0.12);
+  --cl-header-bg: rgba(250, 244, 237, 0.92);
+  --cl-selection-bg: rgba(215, 130, 126, 0.25);
+  --cl-selection-fg: #2a273f;
+  --cl-focus: rgba(180, 100, 90, 0.55);
+  --cl-scrollbar-thumb: #c5bea8;
+  --cl-chart-grid: #e0d9c5;
+}
+
+/* Everforest — green-on-green, soft and easy on the eyes. */
+[data-theme="everforest"] {
+  --cl-bg: #2d353b;
+  --cl-bg-muted: #232a2e;
+  --cl-bg-subtle: #343f44;
+  --cl-bg-emphasis: #3d484d;
+  --cl-border: #475258;
+  --cl-ring: rgba(167, 192, 128, 0.45);
+  --cl-content: #d3c6aa;
+  --cl-content-subtle: #859289;
+  --cl-content-emphasis: #e1dfc8;
+  --cl-content-strong: #f0eddc;
+  --cl-content-inverted: #2d353b;
+  --cl-brand: #a7c080;
+  --cl-brand-faint: #2c3a31;
+  --cl-brand-muted: #3a4c40;
+  --cl-brand-subtle: #6f8d55;
+  --cl-brand-emphasis: #c0d8a0;
+  --cl-brand-inverted: #2d353b;
+  --cl-glow: rgba(167, 192, 128, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.5);
+  --cl-header-bg: rgba(45, 53, 59, 0.92);
+  --cl-selection-bg: rgba(167, 192, 128, 0.32);
+  --cl-selection-fg: #f0eddc;
+  --cl-focus: rgba(167, 192, 128, 0.6);
+  --cl-scrollbar-thumb: #475258;
+  --cl-chart-grid: #3d484d;
+}
+
+/* Synthwave '84 — neon pink + cyan + purple, retro-pop. */
+[data-theme="synthwave"] {
+  --cl-bg: #2a2139;
+  --cl-bg-muted: #1f1830;
+  --cl-bg-subtle: #322846;
+  --cl-bg-emphasis: #3a2f55;
+  --cl-border: #453a6b;
+  --cl-ring: rgba(255, 92, 168, 0.45);
+  --cl-content: #d4d3f5;
+  --cl-content-subtle: #968bb0;
+  --cl-content-emphasis: #f0eefb;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #2a2139;
+  --cl-brand: #ff5ca8;
+  --cl-brand-faint: #3a1b30;
+  --cl-brand-muted: #5a2548;
+  --cl-brand-subtle: #c0427f;
+  --cl-brand-emphasis: #ff8cc4;
+  --cl-brand-inverted: #2a2139;
+  --cl-glow: rgba(255, 92, 168, 0.35);
+  --cl-shadow: rgba(0, 0, 0, 0.6);
+  --cl-header-bg: rgba(42, 33, 57, 0.92);
+  --cl-selection-bg: rgba(255, 92, 168, 0.35);
+  --cl-selection-fg: #ffffff;
+  --cl-focus: rgba(255, 92, 168, 0.6);
+  --cl-scrollbar-thumb: #453a6b;
+  --cl-chart-grid: #3a2f55;
+}
+
+/* Cobalt2 — bold orange + cyan + black, retro IDE. */
+[data-theme="cobalt2"] {
+  --cl-bg: #193549;
+  --cl-bg-muted: #122738;
+  --cl-bg-subtle: #1f3e54;
+  --cl-bg-emphasis: #284862;
+  --cl-border: #2f5572;
+  --cl-ring: rgba(255, 198, 0, 0.45);
+  --cl-content: #d0e1f0;
+  --cl-content-subtle: #6c8ba7;
+  --cl-content-emphasis: #e8f1f8;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #193549;
+  --cl-brand: #ffc600;
+  --cl-brand-faint: #322b08;
+  --cl-brand-muted: #4d4011;
+  --cl-brand-subtle: #ad8a00;
+  --cl-brand-emphasis: #ffd94d;
+  --cl-brand-inverted: #193549;
+  --cl-glow: rgba(255, 198, 0, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.6);
+  --cl-header-bg: rgba(25, 53, 73, 0.92);
+  --cl-selection-bg: rgba(255, 198, 0, 0.32);
+  --cl-selection-fg: #193549;
+  --cl-focus: rgba(255, 198, 0, 0.6);
+  --cl-scrollbar-thumb: #2f5572;
+  --cl-chart-grid: #284862;
+}
+
+/* Monokai Pro — classic green/yellow/orange/pink. */
+[data-theme="monokai"] {
+  --cl-bg: #2d2a2e;
+  --cl-bg-muted: #221f22;
+  --cl-bg-subtle: #343035;
+  --cl-bg-emphasis: #3d393e;
+  --cl-border: #5b595c;
+  --cl-ring: rgba(255, 216, 102, 0.4);
+  --cl-content: #fcfcfa;
+  --cl-content-subtle: #939293;
+  --cl-content-emphasis: #ffffff;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #2d2a2e;
+  --cl-brand: #ffd866;
+  --cl-brand-faint: #2f2a18;
+  --cl-brand-muted: #4d4528;
+  --cl-brand-subtle: #b6983f;
+  --cl-brand-emphasis: #ffe69c;
+  --cl-brand-inverted: #2d2a2e;
+  --cl-glow: rgba(255, 216, 102, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(45, 42, 46, 0.92);
+  --cl-selection-bg: rgba(255, 216, 102, 0.32);
+  --cl-selection-fg: #2d2a2e;
+  --cl-focus: rgba(255, 216, 102, 0.6);
+  --cl-scrollbar-thumb: #5b595c;
+  --cl-chart-grid: #3d393e;
+}
+
+/* Penumbra — earthy red + orange, terminal-inspired. */
+[data-theme="penumbra"] {
+  --cl-bg: #242321;
+  --cl-bg-muted: #1c1b19;
+  --cl-bg-subtle: #2c2b28;
+  --cl-bg-emphasis: #363430;
+  --cl-border: #494744;
+  --cl-ring: rgba(255, 140, 74, 0.45);
+  --cl-content: #f1f1f1;
+  --cl-content-subtle: #948e8a;
+  --cl-content-emphasis: #fafaf6;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #242321;
+  --cl-brand: #ff8c4a;
+  --cl-brand-faint: #36241a;
+  --cl-brand-muted: #5a3a23;
+  --cl-brand-subtle: #c96933;
+  --cl-brand-emphasis: #ffa872;
+  --cl-brand-inverted: #242321;
+  --cl-glow: rgba(255, 140, 74, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(36, 35, 33, 0.92);
+  --cl-selection-bg: rgba(255, 140, 74, 0.32);
+  --cl-selection-fg: #242321;
+  --cl-focus: rgba(255, 140, 74, 0.6);
+  --cl-scrollbar-thumb: #494744;
+  --cl-chart-grid: #363430;
+}
+
+/* Night Owl — bold teal + warm blue + orange, by Sarah Drasner. */
+[data-theme="night-owl"] {
+  --cl-bg: #011627;
+  --cl-bg-muted: #010e1a;
+  --cl-bg-subtle: #082030;
+  --cl-bg-emphasis: #103040;
+  --cl-border: #1c3a55;
+  --cl-ring: rgba(127, 219, 202, 0.45);
+  --cl-content: #d6deeb;
+  --cl-content-subtle: #5c6e83;
+  --cl-content-emphasis: #ecf3f9;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #011627;
+  --cl-brand: #7fdbca;
+  --cl-brand-faint: #0a2826;
+  --cl-brand-muted: #11433c;
+  --cl-brand-subtle: #4ea798;
+  --cl-brand-emphasis: #a6e7da;
+  --cl-brand-inverted: #011627;
+  --cl-glow: rgba(127, 219, 202, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.6);
+  --cl-header-bg: rgba(1, 22, 39, 0.92);
+  --cl-selection-bg: rgba(127, 219, 202, 0.3);
+  --cl-selection-fg: #ffffff;
+  --cl-focus: rgba(127, 219, 202, 0.6);
+  --cl-scrollbar-thumb: #1c3a55;
+  --cl-chart-grid: #103040;
+}
+
+/* GitHub Dark — restrained blue + grey, by GitHub. */
+[data-theme="github-dark"] {
+  --cl-bg: #0d1117;
+  --cl-bg-muted: #010409;
+  --cl-bg-subtle: #161b22;
+  --cl-bg-emphasis: #21262d;
+  --cl-border: #30363d;
+  --cl-ring: rgba(47, 129, 247, 0.45);
+  --cl-content: #c9d1d9;
+  --cl-content-subtle: #8b949e;
+  --cl-content-emphasis: #e6edf3;
+  --cl-content-strong: #ffffff;
+  --cl-content-inverted: #0d1117;
+  --cl-brand: #2f81f7;
+  --cl-brand-faint: #0c2d6b;
+  --cl-brand-muted: #102d70;
+  --cl-brand-subtle: #1f6feb;
+  --cl-brand-emphasis: #58a6ff;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(47, 129, 247, 0.3);
+  --cl-shadow: rgba(0, 0, 0, 0.55);
+  --cl-header-bg: rgba(13, 17, 23, 0.92);
+  --cl-selection-bg: rgba(47, 129, 247, 0.32);
+  --cl-selection-fg: #ffffff;
+  --cl-focus: rgba(47, 129, 247, 0.6);
+  --cl-scrollbar-thumb: #30363d;
+  --cl-chart-grid: #21262d;
+}
+
+/* GitHub Light — same family, daytime counterpart. */
+[data-theme="github-light"] {
+  --cl-bg: #ffffff;
+  --cl-bg-muted: #f6f8fa;
+  --cl-bg-subtle: #eaeef2;
+  --cl-bg-emphasis: #d0d7de;
+  --cl-border: #d8dee4;
+  --cl-ring: rgba(9, 105, 218, 0.35);
+  --cl-content: #57606a;
+  --cl-content-subtle: #6e7781;
+  --cl-content-emphasis: #24292f;
+  --cl-content-strong: #1f2328;
+  --cl-content-inverted: #ffffff;
+  --cl-brand: #0969da;
+  --cl-brand-faint: #ddf4ff;
+  --cl-brand-muted: #b6e3ff;
+  --cl-brand-subtle: #79c0ff;
+  --cl-brand-emphasis: #0550ae;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(9, 105, 218, 0.22);
+  --cl-shadow: rgba(31, 35, 40, 0.12);
+  --cl-header-bg: rgba(255, 255, 255, 0.92);
+  --cl-selection-bg: rgba(9, 105, 218, 0.22);
+  --cl-selection-fg: #1f2328;
+  --cl-focus: rgba(9, 105, 218, 0.55);
+  --cl-scrollbar-thumb: #afb8c1;
+  --cl-chart-grid: #eaeef2;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    Font stacks, selected via data-font / data-mono on <html>.
    The actual fonts are bundled via @fontsource (see main.tsx): variable

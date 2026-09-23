@@ -11,7 +11,7 @@
         try {
           var el = document.documentElement;
           var theme = localStorage.getItem("cl-theme") || "dark";
-          var darkIds = ["dark", "contrast", "tokyo-night", "dracula", "nord", "catppuccin", "one-dark"];
+          var darkIds = ["dark", "contrast", "tokyo-night", "dracula", "nord", "catppuccin", "one-dark", "gruvbox-dark", "ayu-dark", "ayu-mirage", "rose-pine", "everforest", "synthwave", "cobalt2", "monokai", "penumbra", "night-owl", "github-dark"];
           el.setAttribute("data-theme", theme);
           el.classList.toggle("dark", darkIds.indexOf(theme) >= 0);
           var font = localStorage.getItem("cl-font");
