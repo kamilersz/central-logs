@@ -24,6 +24,7 @@ use crate::{Error, RawRecord, Result};
 const READ_BUF: usize = 512 * 1024;
 
 /// One read step's outcome.
+#[derive(Debug)]
 pub enum TailEntry {
     /// A decoded record. The new cursor position (post-record) is included.
     Record { rec: RawRecord, next: Checkpoint },
@@ -68,6 +69,26 @@ impl TailCursor {
                 return Ok(false);
             }
             let file = tokio::fs::OpenOptions::new().read(true).open(&path).await?;
+            // Guard against a stale checkpoint: pruned-then-recreated segment
+            // ids can outlive a persisted offset (e.g. a cursor accumulated
+            // before a crash/rotation bug). Seeking past EOF succeeds
+            // silently and the cursor would then report CaughtUp forever —
+            // the WAL keeps growing while nothing reaches DuckDB. When the
+            // offset points beyond the file, the segment incarnation is
+            // newer than the cursor: reset to 0 and re-read it (worst case a
+            // few rows re-ingest; the alternative is silently dropping
+            // everything buffered after the overrun).
+            let file_len = file.metadata().await?.len();
+            if self.pos.byte_offset > file_len {
+                tracing::warn!(
+                    segment_id = self.pos.segment_id,
+                    checkpoint_offset = self.pos.byte_offset,
+                    segment_bytes = file_len,
+                    "ingest cursor beyond segment EOF (stale checkpoint for a recycled \
+                     segment id); resetting cursor to 0 and re-reading the segment"
+                );
+                self.pos.byte_offset = 0;
+            }
             let mut rdr = tokio::io::BufReader::with_capacity(READ_BUF, file);
             if self.pos.byte_offset > 0 {
                 rdr.seek(std::io::SeekFrom::Start(self.pos.byte_offset))
@@ -237,4 +258,86 @@ impl TailCursor {
 
 fn rdr_consume(open: &mut (u64, tokio::io::BufReader<tokio::fs::File>), n: usize) {
     open.1.consume(n);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(id: u8) -> RawRecord {
+        RawRecord {
+            receive_ts: chrono::Utc::now(),
+            source_addr: "10.0.0.1:1".into(),
+            protocol: crate::Protocol::HttpJson,
+            raw: bytes::Bytes::from(format!(r#"{{"msg":"rec-{id}"}}"#)),
+        }
+    }
+
+    /// Regression: a persisted checkpoint with byte_offset beyond the
+    /// segment's EOF (stale cursor for a recycled segment id) used to seek
+    /// past EOF and report CaughtUp forever — the WAL grew while nothing
+    /// reached DuckDB. The cursor must reset to 0 and re-read the segment.
+    #[tokio::test]
+    async fn stale_checkpoint_beyond_eof_resets_to_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+
+        // One 2-record segment.
+        let mut buf = Vec::new();
+        crate::wal::frame::encode_record_into(&mut buf, &sample(1));
+        crate::wal::frame::encode_record_into(&mut buf, &sample(2));
+        std::fs::write(base.join(segment_filename(0)), &buf).unwrap();
+
+        // Cursor starting far beyond EOF (~1.9 GB, as observed in prod).
+        let mut cur = TailCursor::new(
+            base.clone(),
+            Checkpoint {
+                segment_id: 0,
+                byte_offset: 1_947_781_504,
+            },
+        );
+
+        let rec = match cur.next().await.unwrap() {
+            TailEntry::Record { rec, next } => {
+                assert!(next.byte_offset > 0);
+                assert!(next.byte_offset as usize <= buf.len());
+                rec
+            }
+            TailEntry::CaughtUp { .. } => panic!("stale cursor must reset, not report CaughtUp"),
+            TailEntry::BadFrame { error, .. } => panic!("unexpected bad frame: {error}"),
+        };
+        assert!(String::from_utf8_lossy(&rec.raw).contains("rec-1"));
+
+        // Second record decodes normally, then the cursor is caught up.
+        match cur.next().await.unwrap() {
+            TailEntry::Record { rec, .. } => {
+                assert!(String::from_utf8_lossy(&rec.raw).contains("rec-2"))
+            }
+            other => panic!("expected second record, got {other:?}"),
+        }
+        assert!(matches!(cur.next().await.unwrap(), TailEntry::CaughtUp { .. }));
+    }
+
+    /// A checkpoint AT the segment size (legitimate caught-up state) must
+    /// not trigger the reset path — it should report CaughtUp directly.
+    #[tokio::test]
+    async fn checkpoint_at_exact_eof_stays_caught_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let mut buf = Vec::new();
+        crate::wal::frame::encode_record_into(&mut buf, &sample(1));
+        std::fs::write(base.join(segment_filename(0)), &buf).unwrap();
+
+        let mut cur = TailCursor::new(
+            base,
+            Checkpoint {
+                segment_id: 0,
+                byte_offset: buf.len() as u64,
+            },
+        );
+        assert!(matches!(
+            cur.next().await.unwrap(),
+            TailEntry::CaughtUp { .. }
+        ));
+    }
 }
