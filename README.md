@@ -28,7 +28,48 @@ ship logs using the ready-made clients in
 [`integration-sample/`](integration-sample/README.md) (TypeScript, Python,
 Rust, PHP, Java, C, C++).
 
-Prefer to do it by hand?
+### Download a prebuilt binary
+
+Releases publish self-contained binaries (dashboard embedded, `geoip`
+enabled) for Linux x86_64/arm64 and macOS arm64 — see the
+[Releases page](https://github.com/kamilersz/central-logs/releases).
+
+```bash
+VERSION=v0.1.0   # pick the latest tag
+curl -fsSL "https://github.com/kamilersz/central-logs/releases/download/${VERSION}/central-logs-${VERSION}-x86_64-linux.tar.gz" | tar -xz
+cd central-logs-*
+./central-logs
+```
+
+macOS (Apple Silicon) uses `aarch64-macos`; ARM Linux uses
+`aarch64-linux`. Linux binaries are built on Ubuntu 22.04 (glibc 2.35+).
+
+### Run with Docker
+
+```bash
+docker run -d --name central-logs -p 8080:8080 \
+  -v central-logs-data:/data \
+  ghcr.io/kamilersz/central-logs:latest
+```
+
+Multi-arch images (`linux/amd64` + `linux/arm64`) are published to GHCR on
+every release and on every push to `main` (`:main` tag). The image runs as a
+non-root user, stores data in the `/data` volume, and ships a `HEALTHCHECK`
+on `/health`.
+
+### Run with Docker Compose
+
+```bash
+git clone https://github.com/kamilersz/central-logs && cd central-logs
+echo "CENTRAL_LOGS_HTTP_API_KEY=clk_$(openssl rand -hex 24)" >> .env
+docker compose up -d          # dashboard on http://localhost:8080
+```
+
+The included `docker-compose.yml` persists data in a named volume, exposes
+the syslog ports (5140 TCP+UDP), and has commented blocks for the Docker
+gelf/fluentd log-driver ports and mounting a full TOML config.
+
+Prefer to build from source?
 
 ```bash
 cargo build --release

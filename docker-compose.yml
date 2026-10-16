@@ -1,0 +1,47 @@
+# Turnkey central-logs: `docker compose up -d` and open http://localhost:8080
+#
+# First run prints a one-time admin token in the logs when no API key is set:
+#   docker compose logs central-logs | grep -i token
+# Or pre-set one (recommended for a non-loopback bind):
+#   echo "CENTRAL_LOGS_HTTP_API_KEY=clk_$(openssl rand -hex 24)" >> .env
+#
+# Optional: full config file instead of env vars.
+#   cp central-logs.toml.example central-logs.toml   # edit, then uncomment
+#   the config mount below and CENTRAL_LOGS_CONFIG.
+
+services:
+  central-logs:
+    image: ghcr.io/kamilersz/central-logs:latest
+    container_name: central-logs
+    restart: unless-stopped
+    ports:
+      - "8080:8080" # HTTP API + dashboard + OTLP/Sentry/web-analytics ingest
+      - "5140:5140" # syslog TCP
+      - "5140:5140/udp" # syslog UDP
+      # Docker gelf / fluentd / Splunk-HEC log drivers — enable the matching
+      # [ingest.*] section in your config first, then publish the port:
+      # - "12201:12201/udp" # docker --log-driver=gelf
+      # - "12201:12201"     # gelf TCP
+      # - "24224:24224"     # docker --log-driver=fluentd
+    environment:
+      # Admin API key (empty = auth disabled on loopback; the container binds
+      # 0.0.0.0, so set this). Generate: openssl rand -hex 24
+      CENTRAL_LOGS_HTTP_API_KEY: ${CENTRAL_LOGS_HTTP_API_KEY:-}
+      # Full TOML config (mount it under /config below first):
+      # CENTRAL_LOGS_CONFIG: /config/central-logs.toml
+      # CENTRAL_LOGS_HTTP_PORT: "8080"
+      # GeoIP city attribution (optional): fetch the DB first, then uncomment:
+      #   docker compose exec central-logs fetch-geolite.sh /data/GeoLite2-City.mmdb
+      # CENTRAL_LOGS_GEOIP_DB_PATH: /data/GeoLite2-City.mmdb
+    volumes:
+      - central-logs-data:/data
+      # - ./central-logs.toml:/config/central-logs.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \"http://127.0.0.1:$${CENTRAL_LOGS_HTTP_PORT:-8080}/health\" >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  central-logs-data:

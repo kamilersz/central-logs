@@ -1,0 +1,138 @@
+# Build release binaries and publish them to a GitHub Release.
+#
+# Triggered by pushing a version tag:
+#
+#   git tag v0.1.1
+#   git push github v0.1.1
+#
+# Each platform builds natively on its own runner (no cross-compilation),
+# with the SPA embedded into the binary via rust-embed, and uploads a
+# tar.gz + sha256 checksum. A final job assembles the Release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  BIN: central-logs
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux
+            runs-on: ubuntu-22.04 # glibc 2.35 baseline — runs on Debian 12+, Ubuntu 22.04+
+            target: x86_64-unknown-linux-gnu
+          - name: aarch64-linux
+            runs-on: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: aarch64-macos
+            runs-on: macos-14 # Apple Silicon
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install DuckDB bundled build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake
+
+      # The SPA is embedded into the binary at compile time (rust-embed reads
+      # target/web-dist, per vite.config.ts outDir + build.rs).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build SPA
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: cargo build
+        run: cargo build --release --locked --features geoip --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="central-logs-${VERSION}-${{ matrix.name }}"
+          mkdir -p "dist/${STAGE}"
+          cp "target/${{ matrix.target }}/release/${BIN}" "dist/${STAGE}/"
+          cp central-logs.toml.example README.md "dist/${STAGE}/"
+          tar -czf "dist/${STAGE}.tar.gz" -C dist "${STAGE}"
+          cd dist
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+          else
+            shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist/*.tar.gz*
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Self-contained `central-logs` binaries with the dashboard SPA
+            embedded. `geoip` feature enabled (country attribution also works
+            without the GeoLite2 file).
+
+            ## Install (Linux)
+
+            ```bash
+            curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/central-logs-${{ github.ref_name }}-x86_64-linux.tar.gz" | tar -xz
+            cd central-logs-*
+            ./central-logs            # dashboard on http://localhost:8080
+            ```
+
+            ## Run with Docker
+
+            ```bash
+            docker run -d -p 8080:8080 -v central-logs-data:/data \
+              ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ```
+
+            Or with compose: see `docker-compose.yml` in the repo.
+
+            ## Verify checksums
+
+            ```bash
+            sha256sum -c central-logs-*-x86_64-linux.tar.gz.sha256
+            ```
