@@ -482,3 +482,48 @@ existing insert-scoped API keys, `envelope/` + `store/` endpoints with gzip
 request decompression, fingerprint grouping, sampled stacktrace storage on
 `error_groups` (not per-event), the SPA Errors page, and notification triggers
 (event-time webhooks + the `error_group_threshold` evaluator condition).
+
+---
+
+## 15. Website analytics on the same pipeline (`PLAN-WEB-ANALYTICS.md`)
+
+First-party, cookieless website analytics ride the existing
+**insert → WAL → ingest → DuckDB → rollup/compaction** pipeline instead of a
+second stack (design + phase plan: `PLAN-WEB-ANALYTICS.md`):
+
+- **Collect** — `POST /v1/web/collect` (public, same-origin; the only public
+  web surface besides `/v1/web/t.js`). One beacon = one WAL record
+  (`Protocol::WebEvent`, frame tag 14) carrying a JSON envelope of ≤ 20
+  validated browser events. The hot path does cheap work only: DNT/GPC →
+  rate limit (token bucket per client IP) → WAL shed (`web.shed_when_wal_fill_pct`,
+  log ingest always outranks analytics) → shape/size validation → site +
+  origin allowlist (config `[[web.site]]`, memory-only) → trusted-proxy-aware
+  client-IP resolution → envelope → `append_acked`.
+- **Ingest** — the shared worker expands envelopes into typed `web_events`
+  rows: UA/device/bot classification (dependency-free), referrer/UTM
+  attribution, GeoIP, and a visitor hash `SHA-256(daily salt ‖ site ‖ IP ‖
+  UA)`. **Raw IPs are never stored**; salts live in redb (`web_salts`),
+  rotate daily, and are pruned after 2 days so past hashes are
+  unreconstructable. Logs and web rows flush in ONE transaction (two appender
+  buffers under one `unchecked_transaction`), so a `web_events` failure can
+  no longer re-ingest (duplicate) `logs`.
+- **Sessions** — background SQL job (not the sharded ingest workers, which
+  cannot hold per-visitor state): window-function sessionization with a
+  30-minute inactivity gap; deterministic session ids
+  (`hash(site, visitor, start_ts)`) make passes idempotent; touched visitors'
+  sessions are replaced wholesale, which absorbs late out-of-order commits.
+- **Serving** — `/api/web/*` (Read scope): stats series, breakdowns,
+  realtime, Web Vitals p75, JS errors, and `/api/web/trace/{trace_id}` which
+  joins browser events with backend logs on the W3C trace id. MCP tools
+  `web_stats` / `web_top` expose the same aggregates to agents.
+- **Cold tier** — `web_events` compacts to `data/parquet-web/`
+  (`date=/site=` partitions; SEPARATE from the log glob, decision D9) and
+  obeys `web.raw_retention_days`. `web_rollup_1m` (per-site volume for
+  forecast/anomaly) and `web_rollup_1d` (exact per-day uniques, top-N dims
+  with an `'(other)'` tail) use replace-by-bucket semantics; per-day uniques
+  are summed — never deduplicated — across days because of the daily salt.
+- **Privacy posture** — no cookies, no client-side identifiers, no stored
+  IPs; `DNT`/`Sec-GPC` honored by default; authenticated users appear only as
+  keyed per-site hashes. Forecasts/anomalies generalize per site
+  (`web_pageviews:<site>` in `anomalies`), and a sharp drop is tagged as a
+  possible broken tracker.

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiKeyOut, CreateApiKeyResponse } from "../api";
+import { trackEvent } from "../track";
 
 const ALL_SCOPES = ["insert", "read", "write", "admin"] as const;
 type ScopeName = (typeof ALL_SCOPES)[number];
@@ -59,6 +60,7 @@ export default function ApiKeysPage() {
     const scopeStr = Array.from(scopes).join(",");
     try {
       const resp = await api.createApiKey({ name: name.trim(), scopes: scopeStr });
+      trackEvent("ui.apikeys.create", { scopes: scopeStr });
       setCreated(resp);
       setName("");
       setScopes(new Set(["read"]));
@@ -72,6 +74,7 @@ export default function ApiKeysPage() {
     if (!window.confirm(`Revoke key "${label}"? Active clients using it will be disconnected.`)) return;
     try {
       await api.revokeApiKey(id);
+      trackEvent("ui.apikeys.revoke", { key_id: id });
       await refresh();
     } catch (e) {
       setError(String(e));

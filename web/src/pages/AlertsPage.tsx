@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Card, Select, SelectItem } from "@tremor/react";
-import { usePoll, LevelBadge } from "../components";
+import { usePoll, LevelBadge, FilterInput } from "../components";
+import { trackEvent } from "../track";
 import {
   api,
   type AlertRule,
@@ -12,6 +13,9 @@ import {
 } from "../api";
 
 const METRICS = ["volume", "error_rate", "p50_latency", "p95_latency", "p99_latency"];
+/** Sentinel for per-site web traffic (`web_pageviews:<site>`); the site id
+ *  comes from the companion input below (traffic-drop alerts for websites). */
+const WEB_METRIC_SENTINEL = "web_pageviews:";
 const WINDOWS: [string, number][] = [
   ["1m", 60],
   ["5m", 300],
@@ -34,15 +38,18 @@ export default function AlertsPage() {
 
   async function approve(id: number) {
     await api.approveAlert(id);
+    trackEvent("ui.alerts.rule_approve", { rule_id: id });
     refresh();
   }
   async function reject(id: number) {
     await api.rejectAlert(id);
+    trackEvent("ui.alerts.rule_reject", { rule_id: id });
     refresh();
   }
   async function deleteRule(id: number) {
     if (!window.confirm("Delete this alert rule? Firing history is kept.")) return;
     await api.deleteAlertRule(id);
+    trackEvent("ui.alerts.rule_delete", { rule_id: id });
     refresh();
   }
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
@@ -65,7 +72,7 @@ export default function AlertsPage() {
         active.
       </p>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <Stat label="pending approval" value={String(pending.length)} color="text-amber-400" />
         <Stat label="active" value={String(active.length)} color="text-emerald-400" />
         <Stat label="rejected" value={String(rejected.length)} />
@@ -165,7 +172,16 @@ function RuleBuilder({
   const [kind, setKind] = useState<"count" | "metric">(cond.type === "threshold" ? "metric" : "count");
   const [filter, setFilter] = useState(typeof cond.filter === "string" ? cond.filter : "service:api level:error");
   const [metric, setMetric] = useState(
-    editing?.metric && editing.metric !== "events_matching_filter" ? editing.metric : METRICS[0],
+    editing?.metric && editing.metric !== "events_matching_filter"
+      ? editing.metric.startsWith(WEB_METRIC_SENTINEL)
+        ? WEB_METRIC_SENTINEL
+        : editing.metric
+      : METRICS[0],
+  );
+  const [webSite, setWebSite] = useState(
+    editing?.metric && editing.metric.startsWith(WEB_METRIC_SENTINEL)
+      ? editing.metric.slice(WEB_METRIC_SENTINEL.length)
+      : "",
   );
   const [rows, setRows] = useState<ThresholdRow[]>(
     Array.isArray(cond.thresholds) && cond.thresholds.length > 0
@@ -227,22 +243,33 @@ function RuleBuilder({
           ...base,
         } satisfies ThresholdCondition;
       }
+      const resolvedMetric =
+        kind === "metric" && metric === WEB_METRIC_SENTINEL
+          ? `${WEB_METRIC_SENTINEL}${webSite.trim()}`
+          : kind === "metric"
+            ? metric
+            : undefined;
+      if (kind === "metric" && metric === WEB_METRIC_SENTINEL && !webSite.trim()) {
+        throw new Error("site id is required for web traffic alerts");
+      }
       if (editing) {
         await api.updateAlertRule(editing.id, {
           name,
           condition,
-          metric: kind === "metric" ? metric : undefined,
+          metric: resolvedMetric,
           channels: selected,
         });
+        trackEvent("ui.alerts.rule_update", { rule_id: editing.id });
         setOk("alert updated");
         onSaved();
       } else {
         const resp = await api.createAlertRule({
           name,
           condition,
-          metric: kind === "metric" ? metric : undefined,
+          metric: resolvedMetric,
           channels: selected,
         });
+        trackEvent("ui.alerts.rule_create", { rule_id: resp.id });
         setOk(`alert #${resp.id} created and active`);
         setName("");
         onSaved();
@@ -272,7 +299,7 @@ function RuleBuilder({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block col-span-2">
           <span className="cl-stat-label">name</span>
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="api errors spike" />
@@ -300,11 +327,11 @@ function RuleBuilder({
         {kind === "count" ? (
           <label className="block col-span-2">
             <span className="cl-stat-label">filter (DSL)</span>
-            <input
-              className={`${inputCls} cl-mono`}
+            <FilterInput
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={setFilter}
               placeholder="service:api level:error"
+              className={`${inputCls} cl-mono`}
             />
           </label>
         ) : (
@@ -316,7 +343,16 @@ function RuleBuilder({
                   {m}
                 </SelectItem>
               ))}
+              <SelectItem value={WEB_METRIC_SENTINEL}>web_pageviews (per site)</SelectItem>
             </Select>
+            {kind === "metric" && metric === WEB_METRIC_SENTINEL && (
+              <input
+                className={`${inputCls} mt-1 font-mono`}
+                value={webSite}
+                onChange={(e) => setWebSite(e.target.value)}
+                placeholder="site id, e.g. ajakan"
+              />
+            )}
           </label>
         )}
 
@@ -506,6 +542,7 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
     setTestingId(id);
     try {
       const r = await api.testAlertChannel(id);
+      trackEvent("ui.alerts.channel_test", { channel_id: id, ok: r.ok });
       setTestResult((t) => ({ ...t, [id]: { ok: r.ok, text: r.ok ? "delivered" : r.error ?? "failed" } }));
     } catch (e) {
       setTestResult((t) => ({ ...t, [id]: { ok: false, text: String(e) } }));
@@ -517,6 +554,7 @@ function ChannelManager({ channels, onChanged }: { channels: AlertChannel[]; onC
   async function remove(id: number) {
     if (!window.confirm("Delete this channel? Rules referencing it will skip it.")) return;
     await api.deleteAlertChannel(id);
+    trackEvent("ui.alerts.channel_delete", { channel_id: id });
     onChanged();
   }
 

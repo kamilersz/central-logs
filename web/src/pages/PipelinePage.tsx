@@ -24,14 +24,14 @@ export default function PipelinePage() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4">
         <h2 className="text-xl font-semibold">Pipeline</h2>
         <span className="text-xs text-tremor-content-subtle">refreshes every 5s</span>
       </div>
 
       {error && <div className="mb-3 text-red-600 text-sm">{error}</div>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <Stat
           label="insert channel"
           value={data ? `${data.channel_depth} / ${data.channel_capacity}` : "—"}

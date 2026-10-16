@@ -110,6 +110,7 @@ async fn insert_over_http_flows_through_ingest_to_a_filtered_query() {
     .expect("store");
     let enricher = Arc::new(Enricher::new("unknown", "localhost"));
     let parser = Arc::new(LogParser::empty());
+    let web_parser = Arc::new(central_logs::ingest::web::WebParser::new(meta.clone()));
     let ingest_handles = spawn_ingest_workers(
         1,
         tmp.path().join("wal"),
@@ -117,6 +118,7 @@ async fn insert_over_http_flows_through_ingest_to_a_filtered_query() {
         store.clone(),
         enricher,
         parser,
+        web_parser,
         32,
         Duration::from_millis(20),
         None, // error tracker

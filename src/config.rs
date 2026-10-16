@@ -179,6 +179,13 @@ pub struct Config {
     #[serde(default)]
     pub collector: CollectorConfig,
 
+    /// First-party website analytics (`[web]` + `[[web.site]]`): the
+    /// same-origin collector endpoint, trusted proxies, rate/shed limits and
+    /// the list of tracked sites. Disabled by default.
+    /// See PLAN-WEB-ANALYTICS.md.
+    #[serde(default)]
+    pub web: WebConfig,
+
     /// Tracing filter (RUST_LOG-style).
     pub log_filter: String,
 }
@@ -654,6 +661,266 @@ impl Default for K8sCollectorConfig {
     }
 }
 
+// =====================================================================
+// Website analytics ([web] + [[web.site]], PLAN-WEB-ANALYTICS.md)
+// =====================================================================
+
+/// Website-analytics collector configuration (`[web]`).
+///
+/// ```toml
+/// [web]
+/// enabled = true
+/// trusted_proxies = ["127.0.0.1/32"]
+/// max_beacon_bytes = 16384
+/// max_events_per_beacon = 20
+/// rate_limit_per_ip_per_min = 120
+/// shed_when_wal_fill_pct = 80
+/// honor_dnt = true
+/// raw_retention_days = 90
+/// session_gap_minutes = 30
+/// auto_create_projects = true     # TOFU: first beacon with a new id creates
+/// auto_create_max_projects = 100  # the project (first origin wins)
+///
+/// [[web.site]]
+/// id = "site_abc"
+/// allowed_origins = ["https://example.com"]
+/// user_header = "X-CL-User"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct WebConfig {    /// Master switch. The collector endpoints only exist when true.
+    pub enabled: bool,
+    /// CIDRs whose `X-Forwarded-For` / user-header claims are trusted. The
+    /// direct TCP peer is always consulted first; XFF hops are only believed
+    /// when the peer itself is a trusted proxy (anti-spoof).
+    pub trusted_proxies: Vec<String>,
+    /// Per-request body cap for the collector route (small: beacons are
+    /// tiny). The global `http_max_body_bytes` stays in place for everything
+    /// else.
+    pub max_beacon_bytes: usize,
+    /// Cap on `ev` entries per beacon.
+    pub max_events_per_beacon: usize,
+    /// Token-bucket refill rate per client IP per minute.
+    pub rate_limit_per_ip_per_min: u32,
+    /// Refuse (`503`) web beacons when the WAL channel fill ratio reaches
+    /// this percentage — log ingest always outranks analytics.
+    pub shed_when_wal_fill_pct: u8,
+    /// Honour `DNT: 1` / `Sec-GPC: 1` by silently accepting (202) but not
+    /// storing the beacon.
+    pub honor_dnt: bool,
+    /// Retention (days) for raw `web_events` before compaction prunes them.
+    /// Rollups and sessions are kept much longer.
+    pub raw_retention_days: u64,
+    /// Inactivity gap that closes a visit (sessionizer, W3).
+    pub session_gap_minutes: u64,
+    /// Trust-on-first-use auto-provisioning: a beacon carrying an UNKNOWN
+    /// project id is accepted when it presents a valid `Origin`/`Referer`,
+    /// and the project is created on the spot with that origin as its first
+    /// (and initially only) allowed origin. This removes the config+restart
+    /// step: embedding the tracker snippet is sufficient for new projects.
+    /// Afterwards the normal origin allowlist applies, so unrelated origins
+    /// cannot pollute the project. Pre-creating the id via the UI/API
+    /// reserves it (first write wins — mitigates id squatting).
+    pub auto_create_projects: bool,
+    /// Cap on TOTAL projects (config seeds + auto-created). Unknown ids past
+    /// the cap are rejected as `unknown_site` — bounds DB/memory growth from
+    /// id-guessing bots.
+    pub auto_create_max_projects: usize,
+    /// Tracked sites. Config-first (W1); CRUD via `/api/web/sites` is a
+    /// later phase. Validation of the hot path reads this in memory only.
+    pub site: Vec<WebSiteConfig>,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            trusted_proxies: vec!["127.0.0.1/32".to_string(), "::1/128".to_string()],
+            max_beacon_bytes: 16 * 1024,
+            max_events_per_beacon: 20,
+            rate_limit_per_ip_per_min: 120,
+            shed_when_wal_fill_pct: 80,
+            honor_dnt: true,
+            raw_retention_days: 90,
+            session_gap_minutes: 30,
+            auto_create_projects: true,
+            auto_create_max_projects: 100,
+            site: Vec::new(),
+        }
+    }
+}
+
+impl WebConfig {
+    /// Parse the trusted-proxy CIDR list once at startup. Invalid entries are
+    /// skipped (config validation already rejects them with a clear error).
+    pub fn parse_trusted_proxies(&self) -> Vec<Cidr> {
+        self.trusted_proxies
+            .iter()
+            .filter_map(|c| Cidr::parse(c))
+            .collect()
+    }
+
+    /// Look up a configured site by id.
+    pub fn site(&self, id: &str) -> Option<&WebSiteConfig> {
+        self.site.iter().find(|s| s.id == id)
+    }
+}
+
+/// One tracked site (`[[web.site]]`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct WebSiteConfig {
+    /// Public site identifier carried in every beacon (`{"s": "site_abc"}`).
+    pub id: String,
+    /// Origins allowed to send beacons (scheme + host, e.g.
+    /// `https://example.com`). Matched against the `Origin` header, falling
+    /// back to the `Referer`'s origin.
+    pub allowed_origins: Vec<String>,
+    /// Optional authenticated-user header (e.g. `X-CL-User`). Only honoured
+    /// when the request arrives from a trusted proxy, and the header is
+    /// stripped client-side by the proxy (see INTEGRATION.md).
+    pub user_header: Option<String>,
+    /// IPs/CIDRs treated as the operator's own visits (e.g. office egress,
+    /// home IP). Matching beacons are stored with `internal = TRUE` so the
+    /// dashboard can exclude them ("exclude my visits" toggle). Bare IPs
+    /// (`203.0.113.7`) or CIDRs (`10.0.0.0/8`); empty = no marking.
+    #[serde(default)]
+    pub exclude_ips: Vec<String>,
+}
+
+impl WebSiteConfig {
+    /// True when `ip` belongs to this project's operator-excluded ranges.
+    /// The match runs on the already-resolved client IP (spoof-proof: direct
+    /// clients can't forge their TCP source, proxied ones are resolved only
+    /// from trusted peers), so a positive here is trustworthy.
+    pub fn excludes(&self, ip: std::net::IpAddr) -> bool {
+        self.exclude_ips
+            .iter()
+            .filter_map(|c| Cidr::parse(c.trim()))
+            .any(|c| c.contains(ip))
+    }
+}
+
+impl Default for WebSiteConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            allowed_origins: Vec::new(),
+            user_header: None,
+            exclude_ips: Vec::new(),
+        }
+    }
+}
+
+/// Validate one web-analytics project (site) definition. Shared by
+/// `Config::validate` (for `[[web.site]]` seeds) and the runtime CRUD handler
+/// (`POST /api/web/sites`) so both surfaces enforce identical rules.
+pub fn validate_web_site(
+    id: &str,
+    allowed_origins: &[String],
+    user_header: Option<&str>,
+    exclude_ips: &[String],
+) -> crate::Result<()> {
+    if id.trim().is_empty() {
+        return Err(crate::Error::config(
+            "web.site entries must have a non-empty id",
+        ));
+    }
+    if id.len() > 64 {
+        return Err(crate::Error::config(format!(
+            "web.site id '{id}' is too long (max 64 chars)"
+        )));
+    }
+    if id.trim() != id || id.contains(|c: char| c.is_whitespace()) {
+        return Err(crate::Error::config(format!(
+            "web.site id '{id}' must not contain whitespace"
+        )));
+    }
+    for origin in allowed_origins {
+        let o = origin.trim();
+        // "*" accepts beacons from any (present) origin — convenient for
+        // dashboards behind dynamic reverse-proxy hostnames; prefer explicit
+        // origins for anything facing untrusted browsers (any site can then
+        // submit beacons under the project id, subject to rate limits).
+        if o == "*" {
+            continue;
+        }
+        let ok = (o.starts_with("https://") || o.starts_with("http://"))
+            && o.len() > "https://".len()
+            && !o["https://".len()..].contains('/');
+        if !ok {
+            return Err(crate::Error::config(format!(
+                "web.site '{id}' allowed_origins entry '{origin}' must be a bare origin \
+                 like 'https://example.com' (scheme + host, no path) or \"*\" for any origin"
+            )));
+        }
+    }
+    if let Some(h) = user_header {
+        if h.trim().is_empty() || h.len() > 128 {
+            return Err(crate::Error::config(
+                "web.site user_header must be a non-empty header name (max 128 chars)",
+            ));
+        }
+    }
+    for ip in exclude_ips {
+        if Cidr::parse(ip.trim()).is_none() {
+            return Err(crate::Error::config(format!(
+                "web.site '{id}' exclude_ips entry '{ip}' must be a bare IP                  (e.g. '203.0.113.7') or CIDR (e.g. '10.0.0.0/8')"
+            )));
+        }
+    }
+    Ok(())
+}
+/// A parsed CIDR block (IPv4 or IPv6). Small hand-rolled version so the
+/// default build stays dependency-light (PLAN-WEB-ANALYTICS §W1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cidr {
+    addr: std::net::IpAddr,
+    prefix: u8,
+}
+
+impl Cidr {
+    /// Parse `a.b.c.d/len` (or a bare address = /32, /128).
+    pub fn parse(s: &str) -> Option<Cidr> {
+        let (addr_part, prefix) = match s.split_once('/') {
+            Some((a, p)) => (a, p.parse::<u8>().ok()?),
+            None => (s, 0),
+        };
+        let addr: std::net::IpAddr = addr_part.trim().parse().ok()?;
+        let max = match addr {
+            std::net::IpAddr::V4(_) => 32,
+            std::net::IpAddr::V6(_) => 128,
+        };
+        let prefix = if s.contains('/') { prefix } else { max };
+        if prefix > max {
+            return None;
+        }
+        Some(Cidr { addr, prefix })
+    }
+
+    /// True when `ip` falls inside the block.
+    pub fn contains(&self, ip: std::net::IpAddr) -> bool {
+        match (self.addr, ip) {
+            (std::net::IpAddr::V4(net), std::net::IpAddr::V4(ip)) => {
+                let net = u32::from(net);
+                let ip = u32::from(ip);
+                let bits = self.prefix as u32;
+                let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+                (net & mask) == (ip & mask)
+            }
+            (std::net::IpAddr::V6(net), std::net::IpAddr::V6(ip)) => {
+                let net = u128::from(net);
+                let ip = u128::from(ip);
+                let bits = self.prefix as u32;
+                let mask = if bits == 0 { 0 } else { u128::MAX << (128 - bits) };
+                (net & mask) == (ip & mask)
+            }
+            _ => false, // v4-mapped comparison is not attempted — proxies and
+                        // clients should use a consistent address family.
+        }
+    }
+}
+
 /// Parse a duration like `45s`, `12h`, `30d`, `2mo` (60d), `1y` (365d).
 pub fn parse_duration(s: &str) -> Result<chrono::Duration, crate::Error> {
     let t = s.trim().to_ascii_lowercase();
@@ -806,6 +1073,7 @@ impl Default for Config {
             error_tracking: ErrorTrackingConfig::default(),
             ingest: IngestConfig::default(),
             collector: CollectorConfig::default(),
+            web: WebConfig::default(),
             log_filter: "info,central_logs=debug".to_string(),
         }
     }
@@ -1122,6 +1390,69 @@ impl Config {
                 return Err(crate::Error::config(format!(
                     "error_tracking.notify.webhooks entries must be http(s) URLs (got '{url}')"
                 )));
+            }
+        }
+        // Website analytics sanity (PLAN-WEB-ANALYTICS.md).
+        if self.web.enabled && self.web.site.is_empty() {
+            return Err(crate::Error::config(
+                "web.enabled = true but no [[web.site]] is configured; add at least one site",
+            ));
+        }
+        {
+            let mut seen_sites = std::collections::HashSet::new();
+            for site in &self.web.site {
+                validate_web_site(&site.id, &site.allowed_origins, site.user_header.as_deref(), &site.exclude_ips)
+                    .map_err(|e| {
+                        crate::Error::config(format!("web.site '{}': {e}", site.id))
+                    })?;
+                if !seen_sites.insert(site.id.as_str()) {
+                    return Err(crate::Error::config(format!(
+                        "web.site id '{}' is defined twice",
+                        site.id
+                    )));
+                }
+            }
+        }
+        for cidr in &self.web.trusted_proxies {
+            if Cidr::parse(cidr).is_none() {
+                return Err(crate::Error::config(format!(
+                    "web.trusted_proxies entry '{cidr}' is not a valid CIDR (e.g. '10.0.0.0/8')"
+                )));
+            }
+        }
+        if self.web.enabled {
+            if self.web.max_beacon_bytes < 64 || self.web.max_beacon_bytes > 1024 * 1024 {
+                return Err(crate::Error::config(
+                    "web.max_beacon_bytes must be between 64 and 1048576",
+                ));
+            }
+            if self.web.max_events_per_beacon == 0 || self.web.max_events_per_beacon > 1000 {
+                return Err(crate::Error::config(
+                    "web.max_events_per_beacon must be between 1 and 1000",
+                ));
+            }
+            if self.web.rate_limit_per_ip_per_min == 0 {
+                return Err(crate::Error::config(
+                    "web.rate_limit_per_ip_per_min must be >= 1",
+                ));
+            }
+            if self.web.shed_when_wal_fill_pct == 0 || self.web.shed_when_wal_fill_pct > 100 {
+                return Err(crate::Error::config(
+                    "web.shed_when_wal_fill_pct must be between 1 and 100",
+                ));
+            }
+            if self.web.raw_retention_days == 0 {
+                return Err(crate::Error::config("web.raw_retention_days must be >= 1"));
+            }
+            if self.web.session_gap_minutes == 0 {
+                return Err(crate::Error::config("web.session_gap_minutes must be >= 1"));
+            }
+            if self.web.auto_create_max_projects == 0
+                || self.web.auto_create_max_projects > 10_000
+            {
+                return Err(crate::Error::config(
+                    "web.auto_create_max_projects must be between 1 and 10000",
+                ));
             }
         }
         Ok(())

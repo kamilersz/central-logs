@@ -10,6 +10,7 @@ pub mod msgpack;
 pub mod otlp;
 pub mod splunk_hec;
 pub mod syslog;
+pub mod web;
 
 pub use counters::{InsertCounters, InsertCountersRef, ProtocolCounters};
 pub use fluentd::{spawn_fluentd_listener, FluentdState};

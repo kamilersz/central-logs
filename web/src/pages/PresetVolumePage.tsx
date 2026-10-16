@@ -38,7 +38,7 @@ export default function PresetVolumePage() {
       <h2 className="text-xl font-semibold mb-4">Volume + Forecast</h2>
       <TimeFilterBar value={tf} onChange={setTf} />
 
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <Stat label="records in range" value={total.toLocaleString()} />
         <Stat label="avg / bucket" value={fmtRate(rate)} />
         <Stat label="forecast model" value={fc?.model ?? "—"} />

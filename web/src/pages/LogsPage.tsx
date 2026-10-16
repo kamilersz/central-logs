@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Button,
   Card,
-  Flex,
   Select,
   SelectItem,
   Table,
@@ -21,7 +20,8 @@ import {
   SparklesIcon,
 } from "@heroicons/react/24/outline";
 import { api, type LogRow, type LogsParams, type SchemaResponse } from "../api";
-import { LevelBadge, toLocalInput } from "../components";
+import { LevelBadge, toLocalInput, FilterInput } from "../components";
+import { trackEvent } from "../track";
 
 const WINDOWS = ["5m", "15m", "1h", "6h", "24h", "7d", "30d", "90d"] as const;
 
@@ -99,6 +99,8 @@ export default function LogsPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiRaw, setAiRaw] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>("");
+  // Last filter state sent to ui.logs.search (dedupe key).
+  const lastTracked = useRef("");
 
   useEffect(() => {
     api.schema().then(setSchema).catch(() => {});
@@ -117,6 +119,17 @@ export default function LogsPage() {
 
   async function refresh() {
     if (customInvalid) return;
+    // Dogfood: log the settled filter state (deduped — refresh fires on
+    // every debounced keystroke, but only new states are tracked).
+    const stateKey = JSON.stringify({ filter, rangeParams });
+    if (stateKey !== lastTracked.current) {
+      lastTracked.current = stateKey;
+      trackEvent("ui.logs.search", {
+        filter,
+        window: windowSel,
+        ...(windowSel === "custom" ? { from: customFrom, to: customTo } : {}),
+      });
+    }
     setLoading(true);
     try {
       const resp = await api.logs({ filter, ...rangeParams, limit: 200 });
@@ -140,6 +153,7 @@ export default function LogsPage() {
 
   async function exportXlsx() {
     if (customInvalid) return;
+    trackEvent("ui.logs.export", { filter, window: windowSel, limit: EXPORT_LIMIT });
     setExporting(true);
     setExportError(null);
     try {
@@ -160,6 +174,7 @@ export default function LogsPage() {
         "Describe what you want to see (e.g. 'errors for user 42 in the last hour'):",
       );
       if (!nl) return;
+      trackEvent("ui.logs.ai_query", { window: windowSel });
       const resp = await api.aiQuery(
         nl,
         windowSel === "custom" ? undefined : windowSel,
@@ -185,14 +200,14 @@ export default function LogsPage() {
   const suggestions = useMemo(() => schema?.filterable_columns ?? [], [schema]);
 
   return (
-    <div className="min-h-screen p-6 max-w-7xl mx-auto">
-      <Flex className="mb-5">
-        <div>
+    <div className="min-w-0 w-full">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h1 className="cl-title">Logs Explorer</h1>
           <p className="cl-subtitle text-sm">search, filter and inspect everything flowing through the pipeline</p>
         </div>
-        <Flex className="gap-3 justify-end">
-          <Muted className="text-xs">updated {lastUpdated}</Muted>
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end shrink-0">
+          <Muted className="text-xs w-full sm:w-auto">updated {lastUpdated}</Muted>
           <Button
             icon={ArrowDownTrayIcon}
             variant="secondary"
@@ -211,22 +226,22 @@ export default function LogsPage() {
           >
             Refresh
           </Button>
-        </Flex>
-      </Flex>
+        </div>
+      </div>
       {exportError && (
         <div className="mb-4 cl-error-banner">Export failed: {exportError}</div>
       )}
 
       {/* Filter bar */}
       <Card className="mb-4">
-        <div className="grid grid-cols-3 gap-3 items-end">
-          <div className="col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div className="md:col-span-2 min-w-0">
             <Muted className="text-xs">Filter DSL — AND / OR / (grouping) / -exclude</Muted>
-            <input
-              type="text"
+            <FilterInput
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={setFilter}
               placeholder="service:api OR service:web level:error -service:internal"
+              ariaLabel="filter"
               className="cl-mono mt-1 w-full px-3 py-2 text-sm bg-tremor-background-muted dark:bg-dark-tremor-background-muted border border-tremor-border dark:border-dark-tremor-border rounded-md text-tremor-content-strong dark:text-dark-tremor-content-strong placeholder:text-tremor-content-subtle dark:placeholder:text-dark-tremor-content-subtle focus:border-tremor-brand dark:focus:border-dark-tremor-brand"
             />
             <div className="mt-1.5 flex flex-wrap gap-1">
@@ -251,20 +266,20 @@ export default function LogsPage() {
               ))}
             </Select>
             {windowSel === "custom" && (
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2">
                 <input
                   type="datetime-local"
                   value={customFrom}
                   onChange={(e) => setCustomFrom(e.target.value)}
-                  className={customRangeCls}
+                  className={`${customRangeCls} w-full min-w-0`}
                   aria-label="from"
                 />
-                <span className="text-tremor-content-subtle dark:text-dark-tremor-content-subtle text-sm">→</span>
+                <span className="hidden sm:inline text-tremor-content-subtle dark:text-dark-tremor-content-subtle text-sm">→</span>
                 <input
                   type="datetime-local"
                   value={customTo}
                   onChange={(e) => setCustomTo(e.target.value)}
-                  className={customRangeCls}
+                  className={`${customRangeCls} w-full min-w-0`}
                   aria-label="to"
                 />
               </div>
@@ -274,7 +289,7 @@ export default function LogsPage() {
             )}
           </div>
         </div>
-        <Flex className="mt-3 justify-start gap-2">
+        <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
           <Button
             icon={SparklesIcon}
             variant="light"
@@ -285,14 +300,14 @@ export default function LogsPage() {
             Ask AI
           </Button>
           {aiError && (
-            <div className="flex-1 cl-error-banner">
+            <div className="flex-1 cl-error-banner min-w-0">
               {aiError}
             </div>
           )}
           {aiRaw && (
-            <Muted className="text-xs truncate max-w-md cl-mono">{aiRaw}</Muted>
+            <Muted className="text-xs truncate max-w-full sm:max-w-md cl-mono">{aiRaw}</Muted>
           )}
-        </Flex>
+        </div>
         {filterError && (
           <div className="mt-3 cl-error-banner">
             Filter error: {filterError}
@@ -301,14 +316,14 @@ export default function LogsPage() {
       </Card>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <Card>
           <div className="cl-stat-label">matched</div>
           <div className="cl-stat-value">{total.toLocaleString()}</div>
         </Card>
         <Card>
           <div className="cl-stat-label">window</div>
-          <div className="cl-stat-value">
+          <div className="cl-stat-value break-words">
             {windowSel === "custom"
               ? `${customFrom.replace("T", " ")} → ${customTo.replace("T", " ")}`
               : windowSel}
@@ -322,7 +337,8 @@ export default function LogsPage() {
       </div>
 
       {/* Results */}
-      <Card>
+      <Card className="!p-0 overflow-hidden">
+        <div className="cl-table-scroll">
         <Table>
           <TableHead>
             <TableRow>
@@ -365,7 +381,7 @@ export default function LogsPage() {
                       <LevelBadge level={r.level ?? "—"} />
                     </TableCell>
                     <TableCell>
-                      <div className="cl-msg truncate max-w-xl">
+                      <div className="cl-msg truncate max-w-[50vw] sm:max-w-xl">
                         {r.message ?? ""}
                         {r.hot?.user_name != null && (
                           <span className="ml-2 text-tremor-content-subtle dark:text-dark-tremor-content-subtle">
@@ -392,6 +408,7 @@ export default function LogsPage() {
             })}
           </TableBody>
         </Table>
+        </div>
         {rows.length === 0 && !loading && (
           <div className="cl-empty">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-tremor-content-subtle dark:text-dark-tremor-content-subtle" opacity="0.5">
@@ -422,8 +439,8 @@ function LogDetail({ row }: { row: LogRow }) {
     ["insert_ts", row.insert_ts],
   ];
   return (
-    <div className="grid grid-cols-2 gap-4 p-3">
-      <div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 min-w-0">
+      <div className="min-w-0">
         <Muted className="text-xs">fields</Muted>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
           {fields.map(([k, v]) =>

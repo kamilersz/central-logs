@@ -403,6 +403,200 @@ curl -sf "$BASE/api/logs?filter=service:my-app&window=1h" \
 
 ---
 
+## Website analytics (first-party tracker)
+
+central-logs can also ingest **website analytics** from your own sites —
+pageviews, custom events, outbound/download clicks, engagement, Web Vitals and
+JS errors — into a separate `web_events` table that joins backend logs via
+`trace_id` (PLAN-WEB-ANALYTICS.md). The tracker is cookieless and first-party:
+beacons are sent **same-origin**, so ad-blockers rarely interfere, and the
+server derives a daily-rotating visitor hash instead of storing IPs or cookies.
+
+> **Zero per-site setup.** Pick a project id, embed the snippet, proxy two
+> paths — the **first beacon carrying a new id creates the project
+> automatically** (trust on first use: its origin becomes the first allowed
+> origin). The only server step, done once by an operator, is enabling the
+> collector (§4). The in-app **Connect → Web analytics** tab walks through
+> the same steps with your host filled in.
+
+### 1. Name your project, embed the tracker
+
+One id per site/app (`ajakan`, `shop`, … — letters, digits, `._-`, max 64
+chars). It travels in every beacon (`{"s": "ajakan", …}`) and scopes the
+dashboard, origins, and rollups:
+
+```html
+<script defer data-site="ajakan" data-endpoint="/_/e" src="/_/s.js"></script>
+```
+
+For single-page apps no extra work is needed — `history.pushState` /
+`replaceState` / `popstate` are wrapped automatically and each URL change
+sends a pageview.
+
+Custom events:
+
+```js
+window.cl.track("signup", { plan: "pro" });
+```
+
+To reserve an id (first write wins — guards against squatting) or pin extra
+origins upfront, pre-create it on the Web page (admin, Projects panel) or via
+`POST /api/web/sites` (§6). Otherwise just ship the snippet: first beacon
+creates the project, no restart, no API call.
+
+To correlate browser sessions with backend logs, have your backend render
+`<meta name="traceparent" content="00-<trace_id>-<span_id>-01">` — the tracker
+picks it up and every `web_events` row carries `trace_id`, so
+`web_events JOIN logs USING (trace_id)` works.
+
+### 2. Reverse proxy (recommended: neutral paths)
+
+Use paths ad-blockers don't match (`/_/s.js`, `/_/e`). The proxy also sets
+`X-CL-User` from the authenticated session — after **deleting** any
+client-supplied copy, so it can't be spoofed.
+
+**Caddy:**
+
+```caddy
+example.com {
+    # Tracker script + collect endpoint → central-logs (same-origin).
+    handle_path /_/s.js   { reverse_proxy 127.0.0.1:8080/v1/web/t.js }
+    handle_path /_/e      { reverse_proxy 127.0.0.1:8080/v1/web/collect }
+
+    # Authenticated app pages: set the user header server-side.
+    # (In your app framework, strip X-CL-User from the incoming request, then
+    #  set it from the session BEFORE proxying — never trust the client copy.)
+
+    handle /* { reverse_proxy 127.0.0.1:3000 }   # your app
+}
+```
+
+**nginx:**
+
+```nginx
+location = /_/s.js {
+    proxy_set_header X-CL-User "";                 # strip client copy
+    proxy_pass http://127.0.0.1:8080/v1/web/t.js;
+}
+location = /_/e {
+    proxy_set_header X-Forwarded-For $remote_addr; # rightmost hop trusted
+    proxy_set_header X-CL-User "";                 # strip client copy
+    proxy_pass http://127.0.0.1:8080/v1/web/collect;
+}
+```
+
+Because central-logs only honours `X-Forwarded-For` / `X-CL-User` when the
+direct peer is inside `web.trusted_proxies`, a client spoofing those headers
+directly against `:8080` is ignored.
+
+**Behind Cloudflare:** the collector also honors `CF-Connecting-IP` (which
+Cloudflare stamps with the real eyeball IP) *ahead* of `X-Forwarded-For`.
+Keep it that way — if your proxy overwrites XFF with `$remote_addr`, that
+value is a *rotating Cloudflare edge IP* that changes per connection, and
+every beacon would hash to a different visitor (fragmented
+visitors/sessions). `CF-Connecting-IP` passes through untouched, so the
+default config is already correct; just don't strip that header.
+
+**Route-inside-your-app alternative:** if you cannot change the proxy, add two
+app routes (`/_/s.js`, `/_/e`) that forward the request to central-logs with
+the site's endpoint — and set `X-CL-User` from your session there.
+
+### 3. Verify
+
+```bash
+# Beacon from your site (or curl through the proxy):
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  -H 'Origin: https://ajakan.example' -H 'Content-Type: text/plain' \
+  --data '{"s":"ajakan","ev":[{"e":"pageview","u":"/test","dt":0}]}' \
+  http://127.0.0.1:8080/v1/web/collect
+# → 202 (first beacon for a new id also creates the project)
+
+# Rows appear within a few seconds (ingest is async):
+curl -sS -H "Authorization: Bearer $CENTRAL_LOGS_HTTP_API_KEY" \
+  'http://127.0.0.1:8080/api/web/stats?site=ajakan&from=2026-01-01T00:00:00Z&metric=pageviews'
+```
+
+Rejections are visible in `/api/counters` under `web_rejected_total`
+(`dnt`, `rate_limited`, `shed`, `unknown_site`, `origin_denied`, …).
+A 202 with nothing stored almost always means `origin_denied` — the Origin
+isn't allowlisted for that project.
+
+A ready-made browser test page lives at `tests/fixtures/web/index.html`.
+
+### 4. One-time server setup (operator only)
+
+The collector itself must be enabled once (restart). Per-site config is
+optional — with `auto_create_projects` (default on) new projects need no
+config at all; `[[web.site]]` entries below are seeds for infra-managed ids:
+
+```toml
+[web]
+enabled = true
+trusted_proxies = ["127.0.0.1/32"]   # proxies allowed to set X-Forwarded-For / X-CL-User
+max_beacon_bytes = 16384
+rate_limit_per_ip_per_min = 120
+shed_when_wal_fill_pct = 80          # drop analytics before logs feel pressure
+honor_dnt = true                     # DNT/GPC → 202, not stored
+raw_retention_days = 90
+auto_create_projects = true
+auto_create_max_projects = 100
+
+# [[web.site]]
+# id = "ajakan"
+# allowed_origins = ["https://ajakan.example"]
+# user_header = "X-CL-User"            # optional authenticated-user header
+```
+
+This mounts two **public** endpoints (no API key — browsers cannot
+set custom headers on beacons):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/web/t.js` | the tracker script (serve via a neutral path) |
+| `POST /v1/web/collect` | the beacon collector |
+
+Everything else under `/v1/web/*` and `/api/web/*` stays authenticated.
+
+### 5. Privacy model (what is and isn't stored)
+
+- No cookies, no `localStorage`, no client-side identifiers.
+- Raw client IPs are **never stored** — they only feed a SHA-256-based
+  `visitor_id` salted with a **daily-rotating** random salt. The same visitor
+  hashes identically within one UTC day and differently the next; salts are
+  deleted after 2 days, making past hashes unreconstructable.
+- Consequence: "unique visitors" across multi-day ranges are the SUM of daily
+  uniques (never double-counted, but not deduplicated across days).
+- `DNT: 1` / `Sec-GPC: 1` beacons are answered `202` and discarded when
+  `honor_dnt = true`.
+- Authenticated `user_id`s appear only as keyed hashes.
+
+### 6. Project API + self-tracking
+
+```bash
+# List projects (any read-scoped key):
+curl -s -H "Authorization: Bearer $KEY" $ORIGIN/api/web/sites
+# → {"enabled":true,"sites":[{"id":"central-logs",...,"source":"config"}]}
+
+# Create a project (admin key; live immediately, no restart):
+curl -s -X POST -H "Authorization: Bearer $ADMIN_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"shop","allowed_origins":["https://shop.example.com"]}' \
+  $ORIGIN/api/web/sites
+# → {"status":"created","id":"shop"} (409 if the id exists, 400 if invalid)
+
+# Delete a runtime project (admin; history is kept, new beacons rejected):
+curl -s -X DELETE -H "Authorization: Bearer $ADMIN_KEY" \
+  $ORIGIN/api/web/sites/shop
+# → {"status":"deleted","id":"shop"} (404 unknown, 409 config-managed)
+```
+
+Dogfooding: when `[web]` is enabled with a `central-logs` project (as in the
+shipped `central-logs.toml`), every dashboard injects `/v1/web/t.js`
+same-origin automatically — each instance's Web page then shows its own
+dashboard usage under the `central-logs` project.
+
+---
+
 ## Onboarding containers & Kubernetes
 
 Docker containers, Docker log drivers, and Kubernetes clusters have their

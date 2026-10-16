@@ -128,6 +128,87 @@ pub struct CreateAlertRuleResult {
     pub status: String,
 }
 
+// =====================================================================
+// Website-analytics tools (PLAN-WEB-ANALYTICS W5). Aggregates only —
+// these never return raw rows, source IPs, or `user_id` hashes.
+// =====================================================================
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct WebStatsParams {
+    /// Site id (`[[web.site]].id`). Empty = all sites.
+    #[schemars(default)]
+    pub site: Option<String>,
+    /// ISO-8601 `from`. Default: 24h ago.
+    #[schemars(default)]
+    pub from: Option<String>,
+    /// ISO-8601 `to`. Default: now.
+    #[schemars(default)]
+    pub to: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct WebTopParams {
+    /// Dimension: path | source | medium | country | device | browser | os | event.
+    pub by: String,
+    /// Site id. Empty = all sites.
+    #[schemars(default)]
+    pub site: Option<String>,
+    /// ISO-8601 `from`. Default: 24h ago.
+    #[schemars(default)]
+    pub from: Option<String>,
+    /// ISO-8601 `to`. Default: now.
+    #[schemars(default)]
+    pub to: Option<String>,
+    /// Max rows (default 10, hard cap 50).
+    #[serde(default = "default_web_top_limit")]
+    pub limit: i64,
+}
+
+fn default_web_top_limit() -> i64 {
+    10
+}
+
+/// Whitelisted breakdown dimension → SQL column (same table as the HTTP API).
+fn web_top_column(by: &str) -> Option<&'static str> {
+    match by {
+        "path" => Some("path"),
+        "event" => Some("event"),
+        "source" => Some("COALESCE(NULLIF(TRIM(source), ''), 'direct')"),
+        "medium" => Some("COALESCE(NULLIF(TRIM(medium), ''), 'none')"),
+        "country" => Some("COALESCE(NULLIF(TRIM(country), ''), 'unknown')"),
+        "region" => Some("COALESCE(NULLIF(TRIM(region), ''), 'unknown')"),
+        "city" => Some("COALESCE(NULLIF(TRIM(city), ''), 'unknown')"),
+        "screen" => Some("COALESCE(CAST(screen_w AS VARCHAR), 'unknown')"),
+        "utm_source" => Some("COALESCE(NULLIF(TRIM(utm->>'$.source'), ''), '(none)')"),
+        "utm_medium" => Some("COALESCE(NULLIF(TRIM(utm->>'$.medium'), ''), '(none)')"),
+        "utm_campaign" => Some("COALESCE(NULLIF(TRIM(utm->>'$.campaign'), ''), '(none)')"),
+        "device" => Some("COALESCE(NULLIF(TRIM(device), ''), 'unknown')"),
+        "browser" => Some("COALESCE(NULLIF(TRIM(browser), ''), 'unknown')"),
+        "os" => Some("COALESCE(NULLIF(TRIM(os), ''), 'unknown')"),
+        _ => None,
+    }
+}
+
+/// Parse ISO-8601 (or date-only) bound, with a fallback default.
+fn web_time_bound(s: Option<&str>, default: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    s.and_then(|v| {
+        chrono::DateTime::parse_from_rfc3339(v)
+            .map(|t| t.with_timezone(&chrono::Utc))
+            .ok()
+            .or_else(|| {
+                chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")
+                    .ok()
+                    .map(|d| {
+                        chrono::DateTime::from_naive_utc_and_offset(
+                            d.and_hms_opt(0, 0, 0).unwrap(),
+                            chrono::Utc,
+                        )
+                    })
+            })
+    })
+    .unwrap_or(default)
+}
+
 /// The MCP server. Holds shared handles to the store and WAL metadata.
 #[derive(Clone)]
 pub struct CentralLogsMcpServer {
@@ -445,6 +526,162 @@ impl CentralLogsMcpServer {
             rule_id: id,
             status: "pending_approval".into(),
         };
+        let json = serde_json::to_string(&result)
+            .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        description = "Website analytics totals for a site over a time range: pageviews, visitors, sessions, bounce rate, avg engaged time, and a daily pageview series. Aggregates only (no raw rows, no user identifiers). Read-only."
+    )]
+    async fn web_stats(
+        &self,
+        Parameters(params): Parameters<WebStatsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let to = web_time_bound(params.to.as_deref(), chrono::Utc::now());
+        let from = web_time_bound(
+            params.from.as_deref(),
+            to - chrono::Duration::hours(24),
+        );
+        let conn = self.store.conn();
+        let conn = conn.lock();
+        let (total_pv, visitors, sessions): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                   SUM(CASE WHEN event='pageview' THEN 1 ELSE 0 END),
+                   SUM(visitors),
+                   SUM(sessions)
+                 FROM web_rollup_1d
+                 WHERE day >= CAST(? AS DATE) AND day <= CAST(? AS DATE)
+                   AND (?::VARCHAR IS NULL OR site_id = ?::VARCHAR)",
+                duckdb::params![
+                    from,
+                    to,
+                    params.site.as_deref(),
+                    params.site.as_deref()
+                ],
+                |r| Ok((
+                    r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                )),
+            )
+            .map_err(|e| McpError::internal_error(format!("web stats: {e}"), None))?;
+        // Bounce rate + avg engaged time come from web_sessions (raw enough
+        // to be exact, small enough to scan).
+        let (bounce_rate, avg_engaged): (f64, f64) = conn
+            .query_row(
+                "SELECT
+                   COALESCE(AVG(CASE WHEN is_bounce THEN 1.0 ELSE 0.0 END), 0),
+                   COALESCE(AVG(engaged_ms), 0)
+                 FROM web_sessions
+                 WHERE start_ts >= ? AND start_ts <= ?
+                   AND (?::VARCHAR IS NULL OR site_id = ?::VARCHAR)",
+                duckdb::params![
+                    from,
+                    to,
+                    params.site.as_deref(),
+                    params.site.as_deref()
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap_or((0.0, 0.0));
+        // Daily pageview series.
+        let mut stmt = conn
+            .prepare(
+                "SELECT day, SUM(pageviews) FROM web_rollup_1d
+                 WHERE day >= CAST(? AS DATE) AND day <= CAST(? AS DATE)
+                   AND (?::VARCHAR IS NULL OR site_id = ?::VARCHAR)
+                 GROUP BY 1 ORDER BY 1",
+            )
+            .map_err(|e| McpError::internal_error(format!("prepare series: {e}"), None))?;
+        let series = stmt
+            .query_map(
+                duckdb::params![from, to, params.site.as_deref(), params.site.as_deref()],
+                |r| {
+                    Ok(serde_json::json!({
+                        "day": r.get::<_, chrono::NaiveDate>(0)?.to_string(),
+                        "pageviews": r.get::<_, i64>(1)?,
+                    }))
+                },
+            )
+            .map_err(|e| McpError::internal_error(format!("series: {e}"), None))?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        let result = serde_json::json!({
+            "site": params.site,
+            "from": from.to_rfc3339(),
+            "to": to.to_rfc3339(),
+            "pageviews": total_pv,
+            // Daily-rotating visitor hash: summed daily uniques, never
+            // deduplicated across days (privacy model — document, don't hide).
+            "visitors": visitors,
+            "sessions": sessions,
+            "bounce_rate": (bounce_rate * 10000.0).round() / 10000.0,
+            "avg_engaged_ms": (avg_engaged * 1000.0).round() / 1000.0,
+            "daily": series,
+        });
+        let json = serde_json::to_string(&result)
+            .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
+    #[tool(
+        description = "Top web-analytics dimension values (pages, sources, mediums, countries, regions, cities, screens, devices, browsers, OSes, UTM source/medium/campaign, event kinds) by pageviews over a time range. Aggregates only. Read-only."
+    )]
+    async fn web_top(
+        &self,
+        Parameters(params): Parameters<WebTopParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let Some(col) = web_top_column(&params.by) else {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "by must be one of: path, source, medium, country, region, city, screen, utm_source, utm_medium, utm_campaign, device, browser, os, event",
+            )]));
+        };
+        let limit = params.limit.clamp(1, 50);
+        let to = web_time_bound(params.to.as_deref(), chrono::Utc::now());
+        let from = web_time_bound(
+            params.from.as_deref(),
+            to - chrono::Duration::hours(24),
+        );
+        let conn = self.store.conn();
+        let conn = conn.lock();
+        let sql = format!(
+            "SELECT {col} AS dim_value,
+                    SUM(CASE WHEN event='pageview' THEN 1 ELSE 0 END) AS pageviews,
+                    COUNT(DISTINCT visitor_id) AS visitors,
+                    COUNT(DISTINCT session_id) AS sessions
+             FROM web_events_all
+             WHERE ts >= ? AND ts <= ? AND NOT is_bot
+               AND (?::VARCHAR IS NULL OR site_id = ?::VARCHAR)
+             GROUP BY 1 ORDER BY pageviews DESC, dim_value
+             LIMIT {limit}"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| McpError::internal_error(format!("prepare: {e}"), None))?;
+        let rows = stmt
+            .query_map(
+                duckdb::params![from, to, params.site.as_deref(), params.site.as_deref()],
+                |r| {
+                    Ok(serde_json::json!({
+                        "value": r.get::<_, Option<String>>(0)?.unwrap_or_else(|| "(none)".into()),
+                        "pageviews": r.get::<_, i64>(1)?,
+                        "visitors": r.get::<_, i64>(2)?,
+                        "sessions": r.get::<_, i64>(3)?,
+                    }))
+                },
+            )
+            .map_err(|e| McpError::internal_error(format!("query: {e}"), None))?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        let result = serde_json::json!({
+            "by": params.by,
+            "site": params.site,
+            "from": from.to_rfc3339(),
+            "to": to.to_rfc3339(),
+            "rows": rows,
+        });
         let json = serde_json::to_string(&result)
             .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
         Ok(CallToolResult::success(vec![ContentBlock::text(json)]))

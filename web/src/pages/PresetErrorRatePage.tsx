@@ -22,7 +22,7 @@ export default function PresetErrorRatePage() {
       <h2 className="text-xl font-semibold mb-4">Error Rate</h2>
       <TimeFilterBar value={tf} onChange={setTf} />
 
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <Stat label="total errors" value={errors.toLocaleString()} color="text-red-600" />
         <Stat label="total records" value={total.toLocaleString()} />
         <Stat label="overall error rate" value={`${overall.toFixed(2)}%`} color={overall > 5 ? "text-red-600" : ""} />

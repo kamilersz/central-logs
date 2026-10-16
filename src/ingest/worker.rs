@@ -1,5 +1,10 @@
 //! Ingest worker: tails WAL via a checkpointed cursor, parses, enriches, and
 //! batch-inserts into DuckDB (architecture §2b.3-4).
+//!
+//! Since PLAN-WEB-ANALYTICS W1 the worker carries TWO buffers (`LogRow` and
+//! `WebRow`); a flush commits both in ONE transaction before the checkpoint
+//! advances, so a `web_events` failure can no longer re-ingest (duplicate)
+//! `logs` rows on retry.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,11 +16,12 @@ use tokio::time::Instant;
 
 use crate::ingest::enrich::Enricher;
 use crate::ingest::parse::Parser;
-use crate::store::appender::{insert_batch, LogRow};
+use crate::ingest::web::WebParser;
+use crate::store::appender::{insert_logs_in_tx, insert_web_in_tx, LogRow};
 use crate::store::Store;
 use crate::wal::cursor::{TailCursor, TailEntry};
 use crate::wal::meta::{Checkpoint, WalMeta};
-use crate::Result;
+use crate::{Protocol, Result};
 
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct IngestStats {
@@ -23,6 +29,7 @@ pub struct IngestStats {
     pub batches_committed: u64,
     pub parse_errors: u64,
     pub insert_errors: u64,
+    pub web_events_ingested: u64,
     pub last_commit_ts: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -46,6 +53,7 @@ pub fn spawn_ingest_workers(
     store: Store,
     enricher: Arc<Enricher>,
     parser: Arc<Parser>,
+    web_parser: Arc<WebParser>,
     batch_size: usize,
     flush_interval: Duration,
     error_tracker: Option<Arc<crate::errors::ErrorTracker>>,
@@ -57,6 +65,7 @@ pub fn spawn_ingest_workers(
         let store = store.clone();
         let enricher = enricher.clone();
         let parser = parser.clone();
+        let web_parser = web_parser.clone();
         let batch_size = batch_size;
         let flush_interval = flush_interval;
         let total = n;
@@ -71,6 +80,7 @@ pub fn spawn_ingest_workers(
                 store,
                 enricher,
                 parser,
+                web_parser,
                 batch_size,
                 flush_interval,
                 stats.clone(),
@@ -100,6 +110,7 @@ async fn run_worker(
     store: Store,
     enricher: Arc<Enricher>,
     parser: Arc<Parser>,
+    web_parser: Arc<WebParser>,
     batch_size: usize,
     flush_interval: Duration,
     stats: Arc<Mutex<IngestStats>>,
@@ -115,7 +126,10 @@ async fn run_worker(
         "ingest worker starting (shard: segment_id % {total_workers} == {worker_id})"
     );
 
+    // Two buffers share one checkpoint: flush commits BOTH tables in a
+    // single transaction (PLAN-WEB-ANALYTICS W1 atomicity).
     let mut buf: Vec<LogRow> = Vec::with_capacity(batch_size);
+    let mut web_buf: Vec<crate::store::appender::WebRow> = Vec::with_capacity(16);
     let mut last_flush = Instant::now();
     let mut pending_checkpoint: Option<Checkpoint> = None;
     // Segment this worker last checkpointed (for releasing skipped segments).
@@ -126,11 +140,19 @@ async fn run_worker(
     let mut all_ns: u128 = 0;
     let cycle0 = Instant::now();
 
+    // Helper: flush due? Shared by the record and caught-up paths.
+    macro_rules! flush_due {
+        () => {
+            buf.len() + web_buf.len() >= batch_size
+                || last_flush.elapsed() >= flush_interval
+        };
+    }
+
     loop {
         let entry = {
             let t = Instant::now();
             let e = cursor.next().await;
-            cursor_ns += (t.elapsed().as_nanos());
+            cursor_ns += t.elapsed().as_nanos();
             all_ns = cycle0.elapsed().as_nanos();
             e
         }
@@ -171,17 +193,31 @@ async fn run_worker(
                 // records simply never enter this worker's buffer.
                 if owns_segment(next.segment_id, worker_id, total_workers) {
                     let t = Instant::now();
-                    let mut row = parser.parse(&rec);
-                    enricher.enrich(&mut row, parse_ip_from_addr(&rec.source_addr));
+                    match rec.protocol {
+                        Protocol::WebEvent => {
+                            // One beacon = N web rows (decision D3).
+                            let rows = web_parser.parse(&rec);
+                            if rows.is_empty() {
+                                let mut s = stats.lock();
+                                s.parse_errors += 1;
+                            }
+                            web_buf.extend(rows);
+                        }
+                        _ => {
+                            let mut row = parser.parse(&rec);
+                            enricher.enrich(&mut row, parse_ip_from_addr(&rec.source_addr));
+                            buf.push(row);
+                        }
+                    }
                     parse_ns += t.elapsed().as_nanos();
-                    buf.push(row);
                     pending_checkpoint = Some(next);
-                    if buf.len() >= batch_size || last_flush.elapsed() >= flush_interval {
+                    if flush_due!() {
                         flush_timed(
                             &store,
                             &meta,
                             worker_id,
                             &mut buf,
+                            &mut web_buf,
                             pending_checkpoint,
                             &stats,
                             error_tracker.as_deref(),
@@ -210,12 +246,15 @@ async fn run_worker(
                 let _ = meta.set_checkpoint(worker_id, next);
             }
             TailEntry::CaughtUp { .. } => {
-                if !buf.is_empty() && last_flush.elapsed() >= flush_interval {
+                if (!buf.is_empty() || !web_buf.is_empty())
+                    && last_flush.elapsed() >= flush_interval
+                {
                     flush_timed(
                         &store,
                         &meta,
                         worker_id,
                         &mut buf,
+                        &mut web_buf,
                         pending_checkpoint,
                         &stats,
                         error_tracker.as_deref(),
@@ -246,6 +285,7 @@ async fn flush_timed(
     meta: &WalMeta,
     worker_id: u64,
     buf: &mut Vec<LogRow>,
+    web_buf: &mut Vec<crate::store::appender::WebRow>,
     pending_checkpoint: Option<Checkpoint>,
     stats: &Arc<Mutex<IngestStats>>,
     error_tracker: Option<&crate::errors::ErrorTracker>,
@@ -253,9 +293,19 @@ async fn flush_timed(
     cursor_ns: u128,
     all_ns: u128,
 ) {
-    let n = buf.len();
+    let n = buf.len() + web_buf.len();
     let t0 = Instant::now();
-    flush(store, meta, worker_id, buf, pending_checkpoint, stats, error_tracker).await;
+    flush(
+        store,
+        meta,
+        worker_id,
+        buf,
+        web_buf,
+        pending_checkpoint,
+        stats,
+        error_tracker,
+    )
+    .await;
     let ms = t0.elapsed().as_millis();
     if ms > 50 {
         tracing::debug!(
@@ -270,36 +320,48 @@ async fn flush_timed(
     }
 }
 
+/// Commit BOTH buffers in ONE transaction, then advance the checkpoint.
+/// On failure both buffers are retained for retry (at-least-once), and —
+/// because of the transaction — neither table is left half-flushed.
+#[allow(clippy::too_many_arguments)]
 async fn flush(
     store: &Store,
     meta: &WalMeta,
     worker_id: u64,
     buf: &mut Vec<LogRow>,
+    web_buf: &mut Vec<crate::store::appender::WebRow>,
     pending_checkpoint: Option<Checkpoint>,
     stats: &Arc<Mutex<IngestStats>>,
     error_tracker: Option<&crate::errors::ErrorTracker>,
 ) {
-    if buf.is_empty() {
+    if buf.is_empty() && web_buf.is_empty() {
         return;
     }
-    let n = buf.len();
+    let n = buf.len() + web_buf.len();
     let conn = store.lock();
     let t_insert = Instant::now();
-    let insert_res = insert_batch(&conn, store.hot_attributes(), buf);
+    let insert_res = (|| -> Result<(usize, usize)> {
+        let tx = conn.unchecked_transaction()?;
+        let inserted = insert_logs_in_tx(&tx, store.hot_attributes(), buf)?;
+        let web_inserted = insert_web_in_tx(&tx, web_buf)?;
+        tx.commit()?;
+        Ok((inserted, web_inserted))
+    })();
     let insert_ms = t_insert.elapsed().as_millis();
     let t_track = Instant::now();
-    let track_res = insert_res.map(|inserted| {
+    let track_res = insert_res.map(|(inserted, web_inserted)| {
         // Error tracking: fold the just-committed error rows into
         // error_groups while we still hold the store lock.
         if let Some(et) = error_tracker {
             et.track(&conn, buf);
         }
-        inserted
+        (inserted, web_inserted)
     });
     let track_ms = t_track.elapsed().as_millis();
     match track_res {
-        Ok(inserted) => {
+        Ok((inserted, web_inserted)) => {
             buf.clear();
+            web_buf.clear();
             let t_cp = Instant::now();
             if let Some(cp) = pending_checkpoint {
                 if let Err(e) = meta.set_checkpoint(worker_id, cp) {
@@ -319,6 +381,7 @@ async fn flush(
             }
             let mut s = stats.lock();
             s.records_ingested += inserted as u64;
+            s.web_events_ingested += web_inserted as u64;
             s.batches_committed += 1;
             s.last_commit_ts = Some(chrono::Utc::now());
         }
@@ -392,6 +455,7 @@ mod tests {
         .expect("store");
         let enricher = Arc::new(Enricher::new("unknown", "localhost"));
         let parser = Arc::new(Parser::empty());
+        let web_parser = Arc::new(WebParser::new(meta.clone()));
 
         let handles = spawn_ingest_workers(
             3,
@@ -400,6 +464,7 @@ mod tests {
             store.clone(),
             enricher,
             parser,
+            web_parser,
             32,
             Duration::from_millis(20),
             None,

@@ -198,6 +198,21 @@ CREATE TABLE IF NOT EXISTS error_groups (
 );
 "#;
 
+/// Service registry (autocomplete for `service:` filters). One row per
+/// service ever seen, maintained by the rollup job (`rollup_once` merges each
+/// cycle's window; a one-time backfill covers history when the table is
+/// empty). Hot rows are compacted away, but the registry keeps totals and
+/// last-seen — the pipeline "Services" count and the UI autocomplete read
+/// from here instead of scanning.
+pub const SERVICES_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS services (
+  name        VARCHAR PRIMARY KEY,
+  first_seen  TIMESTAMP,
+  last_seen   TIMESTAMP,
+  total       BIGINT
+);
+"#;
+
 /// Per-fingerprint 1-minute error counts — sparklines + fast threshold
 /// evaluation for `error_group_threshold` alert rules.
 pub const ROLLUP_ERROR_1M_DDL: &str = r#"
@@ -207,6 +222,128 @@ CREATE TABLE IF NOT EXISTS rollup_error_1m (
   count         BIGINT
 );
 "#;
+
+/// Website analytics (PLAN-WEB-ANALYTICS.md §3.3). One row per browser
+/// event. IDs we generate (`visitor_id`/`session_id`/`user_id`) are UBIGINT;
+/// `trace_id` stays VARCHAR because it is the external W3C trace id shared
+/// with `logs.trace_id`. The source IP is NOT stored — it exists only inside
+/// the daily-rotating `visitor_id` hash.
+pub const WEB_EVENTS_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS web_events (
+  ts          TIMESTAMP,
+  insert_ts   TIMESTAMP,
+  site_id     VARCHAR,
+  event       VARCHAR,
+  name        VARCHAR,
+  value       DOUBLE,
+  hostname    VARCHAR,
+  path        VARCHAR,
+  query       VARCHAR,
+  referrer    VARCHAR,
+  source      VARCHAR,
+  medium      VARCHAR,
+  utm         JSON,
+  visitor_id  UBIGINT,
+  session_id  UBIGINT,
+  user_id     UBIGINT,
+  is_internal BOOLEAN DEFAULT FALSE,
+  country     VARCHAR,
+  region      VARCHAR,
+  city        VARCHAR,
+  device      VARCHAR,
+  browser     VARCHAR,
+  os          VARCHAR,
+  screen_w    USMALLINT,
+  is_bot      BOOLEAN,
+  props       JSON,
+  trace_id    VARCHAR,
+  span_id     VARCHAR
+);
+"#;
+
+/// Visit-level rollup filled by the sessionizer job (PLAN-WEB-ANALYTICS W3).
+/// Rows are replaced per (site, session) — not append-only — so unique
+/// counts stay exact per session.
+pub const WEB_SESSIONS_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS web_sessions (
+  session_id  UBIGINT,
+  site_id     VARCHAR,
+  visitor_id  UBIGINT,
+  user_id     UBIGINT,
+  is_internal BOOLEAN DEFAULT FALSE,
+  start_ts    TIMESTAMP,
+  end_ts      TIMESTAMP,
+  entry_path  VARCHAR,
+  exit_path   VARCHAR,
+  pageviews   INTEGER,
+  events      INTEGER,
+  engaged_ms  BIGINT,
+  is_bounce   BOOLEAN,
+  source      VARCHAR,
+  medium      VARCHAR,
+  country     VARCHAR,
+  region      VARCHAR,
+  city        VARCHAR,
+  device      VARCHAR,
+  browser     VARCHAR,
+  os          VARCHAR
+);
+"#;
+
+/// Per-minute web volume per site (forecast/anomaly series, W4).
+/// Replace-by-bucket: each bucket appears at most once.
+pub const WEB_ROLLUP_1M_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS web_rollup_1m (
+  bucket     TIMESTAMP,
+  site_id    VARCHAR,
+  pageviews  BIGINT,
+  events     BIGINT
+);
+"#;
+
+/// Per-day per-dimension aggregates (dashboard long-range charts, W4).
+/// `visitors` is EXACT within a day (daily-rotating visitor hash cannot be
+/// deduplicated across days — documented semantic). Cardinality per dim is
+/// capped at rollup time; the tail is folded into `'(other)'`.
+pub const WEB_ROLLUP_1D_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS web_rollup_1d (
+  day        DATE,
+  site_id    VARCHAR,
+  dim        VARCHAR,
+  dim_value  VARCHAR,
+  pageviews  INTEGER,
+  visitors   INTEGER,
+  sessions   INTEGER,
+  bounces    INTEGER,
+  engaged_ms BIGINT
+);
+"#;
+
+/// Web-analytics projects (PLAN-WEB-ANALYTICS.md W5). One row per project
+/// created at runtime via `POST /api/web/sites` (admin). Config-seeded
+/// `[[web.site]]` entries are NOT stored here — they live in the TOML and
+/// are merged in memory at startup, so the table only holds UI-created
+/// projects. The hot path never touches this table: rows are loaded once at
+/// boot (plus on CRUD) into the in-memory `WebSites` registry.
+pub const WEB_SITES_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS web_sites (
+  id               VARCHAR PRIMARY KEY,
+  allowed_origins  JSON NOT NULL,
+  user_header      VARCHAR,
+  exclude_ips      JSON NOT NULL DEFAULT '[]',
+  created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"#;
+
+/// Directory for web-analytics Parquet, a SIBLING of the log `parquet_dir`
+/// (decision D9): `logs_all` globs `{parquet_dir}/**/*.parquet`, so web
+/// files under it would pollute the log view.
+pub fn web_parquet_dir(parquet_dir: &Path) -> std::path::PathBuf {
+    parquet_dir
+        .parent()
+        .unwrap_or(parquet_dir)
+        .join("parquet-web")
+}
 
 /// Apply all DDL plus the `logs_all` view (hot + parquet). Idempotent across
 /// restarts: hot-attribute columns are added with `ALTER TABLE ADD COLUMN IF
@@ -225,6 +362,12 @@ pub fn apply_schema(conn: &Connection, parquet_dir: &Path, hot: &[HotAttribute])
     conn.execute_batch(ERROR_GROUPS_DDL)?;
     conn.execute_batch(ROLLUP_ERROR_1M_DDL)?;
     conn.execute_batch(BACKUP_RUNS_DDL)?;
+    conn.execute_batch(SERVICES_DDL)?;
+    conn.execute_batch(WEB_EVENTS_DDL)?;
+    conn.execute_batch(WEB_SESSIONS_DDL)?;
+    conn.execute_batch(WEB_ROLLUP_1M_DDL)?;
+    conn.execute_batch(WEB_ROLLUP_1D_DDL)?;
+    conn.execute_batch(WEB_SITES_DDL)?;
 
     // Alert-evaluator bookkeeping columns, added after the original
     // alert_rules DDL shipped — ALTER so existing installs pick them up
@@ -239,7 +382,14 @@ pub fn apply_schema(conn: &Connection, parquet_dir: &Path, hot: &[HotAttribute])
          ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS last_severity VARCHAR; \
          ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS channel VARCHAR; \
          ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS severity VARCHAR; \
-         ALTER TABLE logs ADD COLUMN IF NOT EXISTS fingerprint VARCHAR;",
+         ALTER TABLE logs ADD COLUMN IF NOT EXISTS fingerprint VARCHAR;
+         ALTER TABLE web_sites ADD COLUMN IF NOT EXISTS exclude_ips JSON DEFAULT '[]';
+         ALTER TABLE web_events ADD COLUMN IF NOT EXISTS region VARCHAR;
+         ALTER TABLE web_events ADD COLUMN IF NOT EXISTS city VARCHAR;
+         ALTER TABLE web_events ADD COLUMN IF NOT EXISTS is_internal BOOLEAN DEFAULT FALSE;
+         ALTER TABLE web_sessions ADD COLUMN IF NOT EXISTS region VARCHAR;
+         ALTER TABLE web_sessions ADD COLUMN IF NOT EXISTS city VARCHAR;
+         ALTER TABLE web_sessions ADD COLUMN IF NOT EXISTS is_internal BOOLEAN DEFAULT FALSE;",
     )?;
 
     // Promoted hot-attribute columns (architecture: telemetry optimization).
@@ -288,6 +438,36 @@ pub fn apply_schema(conn: &Connection, parquet_dir: &Path, hot: &[HotAttribute])
         conn.execute_batch(fallback)?;
     }
 
+    // web_events_all (hot + cold Parquet from the SEPARATE web dir, D9).
+    // Same explicit-column pattern as logs_all so `SELECT *` stays stable.
+    let web_dir = web_parquet_dir(parquet_dir);
+    let _ = std::fs::create_dir_all(&web_dir);
+    apply_web_events_all_view(conn, &web_dir)?;
+
+    Ok(())
+}
+
+/// (Re)create the `web_events_all` view over the hot table + the web Parquet
+/// dir. Called from `apply_schema` at boot and after web compaction changes
+/// the file set (mirrors `refresh_logs_all_view`).
+pub fn apply_web_events_all_view(conn: &Connection, web_dir: &Path) -> Result<()> {
+    let web_dir_str = web_dir.to_string_lossy().replace('\'', "''");
+    let col_list_web = crate::store::appender::WEB_COLUMNS.join(", ");
+    let web_view_sql = format!(
+        r#"
+        CREATE OR REPLACE VIEW web_events_all AS
+            SELECT {col_list_web} FROM web_events
+            UNION ALL
+            SELECT {col_list_web} FROM read_parquet('{web_dir_str}/**/*.parquet', hive_partitioning=false, union_by_name=true);
+        "#
+    );
+    if let Err(e) = conn.execute_batch(&web_view_sql) {
+        tracing::warn!(
+            ?e,
+            "creating web_events_all with parquet glob failed; falling back to hot-only view"
+        );
+        conn.execute_batch("CREATE OR REPLACE VIEW web_events_all AS SELECT * FROM web_events;")?;
+    }
     Ok(())
 }
 

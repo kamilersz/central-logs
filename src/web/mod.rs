@@ -1,6 +1,7 @@
 //! Dashboard UI: axum routes + askama templates + vendored assets.
 //! See architecture §4.
 
+pub mod analytics_api;
 pub mod api;
 pub mod auth;
 pub mod auth_api;

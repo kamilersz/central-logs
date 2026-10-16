@@ -9,6 +9,7 @@ pub mod backup;
 pub mod compact;
 pub mod rollup;
 pub mod schema;
+pub mod web;
 
 #[cfg(feature = "object-storage")]
 pub mod cold;
@@ -22,7 +23,9 @@ use parking_lot::Mutex;
 use crate::hot::HotAttribute;
 use crate::Result;
 
-pub use appender::{insert_batch, LogAppender, LogRow};
+pub use appender::{
+    insert_batch, insert_web_in_tx, LogAppender, LogRow, WebRow, WEB_COLUMNS,
+};
 pub use backup::{
     list_runs as list_backup_runs, restore_snapshot, run_snapshot, RestoreSummary, RunSummary,
 };

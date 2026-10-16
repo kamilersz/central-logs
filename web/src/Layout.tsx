@@ -20,7 +20,19 @@ interface LayoutProps {
  *    • Services   — distinct services in last 24h; the full
  *                   "Active services (24h)" label appears on hover.
  */
-function HeaderStatus() {
+/** Live pipeline snapshot (same `/api/pipeline` data as the Pipeline page).
+ *
+ *  Two layouts:
+ *    • row   — the old inline strip (kept for the mobile nav sheet)
+ *    • stack — label/value rows for the account-menu "Live status" section;
+ *              the Queue row links to /pipeline and calls `onNavigate`
+ *              so the menu closes on click.
+ */
+function HeaderStatus({ compact = false, stack = false, onNavigate }: {
+  compact?: boolean;
+  stack?: boolean;
+  onNavigate?: () => void;
+}) {
   const { data } = usePoll<PipelineStatus>(() => api.pipeline(), 10_000, []);
   const fillPct = data ? Math.min(100, data.channel_fill_ratio * 100) : 0;
   const fillColor =
@@ -31,9 +43,17 @@ function HeaderStatus() {
       : "text-emerald-600 dark:text-emerald-300";
 
   // Render placeholder dashes before the first poll resolves so the
-  // header doesn't jump around as data arrives. After that we always
-  // render — even with default zeroes — so the bar stays stable.
+  // surrounding layout doesn't jump around as data arrives.
   if (!data) {
+    if (stack) {
+      return (
+        <div className="cl-mono text-xs space-y-1.5 text-tremor-content-subtle dark:text-dark-tremor-content-subtle">
+          <div className="flex items-center justify-between gap-3"><span>Throughput</span><span>—</span></div>
+          <div className="flex items-center justify-between gap-3"><span>Queue</span><span>—</span></div>
+          <div className="flex items-center justify-between gap-3"><span>Services</span><span>—</span></div>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center gap-4 text-xs cl-mono text-tremor-content-subtle dark:text-dark-tremor-content-subtle whitespace-nowrap">
         <span>— logs/m</span>
@@ -52,9 +72,40 @@ function HeaderStatus() {
   const queueDepth = data.channel_depth;
   const queueCap = data.channel_capacity;
 
+  if (stack) {
+    const subtle = "text-tremor-content-subtle dark:text-dark-tremor-content-subtle";
+    const strong = "text-tremor-content-emphasis dark:text-dark-tremor-content-emphasis";
+    return (
+      <div
+        className="cl-mono text-xs space-y-1.5"
+        title="live traffic snapshot — same data as the Pipeline page"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className={subtle}>Throughput</span>
+          <span className={strong}>{lpmLabel} logs/m</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className={subtle} title="Open the pipeline view">Queue</span>
+          <Link
+            to="/pipeline"
+            onClick={onNavigate}
+            className={`${fillColor} hover:underline underline-offset-2 whitespace-nowrap`}
+            title="Open the pipeline view"
+          >
+            {fillPct.toFixed(0)}% ({formatRows(queueDepth)} / {formatRows(queueCap)})
+          </Link>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className={subtle} title="Active services (24h) — distinct services seen in the last 24h">Services</span>
+          <span className={strong}>{services}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="flex items-center gap-4 text-xs cl-mono whitespace-nowrap"
+      className={`flex items-center ${compact ? "gap-3" : "gap-4"} text-xs cl-mono whitespace-nowrap`}
       title="live traffic snapshot — same data as the Pipeline page"
     >
       <span className="text-tremor-content-emphasis dark:text-dark-tremor-content-emphasis">
@@ -99,13 +150,13 @@ function formatVia(via: string): string {
   }
 }
 
-/** User / scope / sign-out dropdown. Replaces the inline name + scope-pill +
- *  "Sign out" button trio that was wrapping onto multiple lines on narrower
- *  viewports; the affordance now lives behind a single avatar button that
- *  pops a sub-menu (name, scopes, sign out). Click-outside + Escape close. */
-function UserMenu({ whoami, onLogout }: {
+/** Account dropdown behind the avatar button: identity, live pipeline
+ *  status, overflow pages (Storage / API Keys — kept out of the header
+ *  bar so it stays short), scopes, sign out. Click-outside + Escape close. */
+function UserMenu({ whoami, onLogout, overflowLinks }: {
   whoami: WhoamiResponse;
   onLogout: () => Promise<void>;
+  overflowLinks: NavItem[];
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -139,6 +190,17 @@ function UserMenu({ whoami, onLogout }: {
     }
   }
 
+  function close() {
+    setOpen(false);
+  }
+
+  const menuLinkCls = ({ isActive }: { isActive: boolean }) =>
+    `flex w-full items-center rounded-md px-2.5 py-1.5 text-sm transition-colors ${
+      isActive
+        ? "bg-tremor-brand-faint text-tremor-brand dark:bg-dark-tremor-brand-faint dark:text-dark-tremor-brand font-medium"
+        : "text-tremor-content-subtle dark:text-dark-tremor-content-subtle hover:bg-tremor-background-subtle dark:hover:bg-dark-tremor-background-subtle hover:text-tremor-content-strong dark:hover:text-dark-tremor-content-strong"
+    }`;
+
   return (
     <div className="relative" ref={rootRef}>
       <button
@@ -171,6 +233,34 @@ function UserMenu({ whoami, onLogout }: {
             </div>
           </div>
 
+          {/* Live status — the header-bar strip moved in here so the
+              header stays short. Mounts (and polls) only while open. */}
+          <div className="mb-3 pb-3 border-b border-tremor-border dark:border-dark-tremor-border">
+            <div className="cl-stat-label mb-1.5">Live status</div>
+            <HeaderStatus stack onNavigate={close} />
+          </div>
+
+          {/* Overflow pages — Storage / API Keys live here instead of
+              crowding the header nav. */}
+          {overflowLinks.length > 0 && (
+            <div className="mb-3 pb-3 border-b border-tremor-border dark:border-dark-tremor-border">
+              <div className="cl-stat-label mb-1.5">Manage</div>
+              <div className="space-y-0.5">
+                {overflowLinks.map((n) => (
+                  <NavLink
+                    key={n.to}
+                    to={n.to}
+                    end={n.end}
+                    onClick={close}
+                    className={menuLinkCls}
+                  >
+                    {n.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Scopes — read-only badge row, same chip as before but inside
               the menu instead of crowding the header strip. */}
           <div className="mb-3">
@@ -202,17 +292,32 @@ function UserMenu({ whoami, onLogout }: {
   );
 }
 
+interface NavItem {
+  to: string;
+  label: string;
+  end?: boolean;
+}
+
 export default function Layout({ whoami }: LayoutProps) {
   const isAdmin = whoami.scopes.includes("admin");
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  const navItems = [
+  // Primary pages stay in the header bar. Secondary pages (Storage,
+  // API Keys) live in the account menu so the bar stays short.
+  const primaryNav: NavItem[] = [
     { to: "/", label: "Logs", end: true },
+    { to: "/connect", label: "Connect" },
     { to: "/errors", label: "Errors" },
     { to: "/dashboards", label: "Dashboards" },
     { to: "/alerts", label: "Alerts" },
-    { to: "/storage", label: "Storage" },
-    ...(isAdmin ? [{ to: "/api-keys", label: "API Keys" }] : []),
+    { to: "/web", label: "Web" },
   ];
+  const overflowLinks: NavItem[] = [
+    { to: "/storage", label: "Storage" },
+    { to: "/web/projects", label: "Web projects" },
+    ...(isAdmin ? [{ to: "/api-keys", label: "API Keys" } as NavItem] : []),
+  ];
+  const mobileNav = [...primaryNav, ...overflowLinks];
 
   async function onLogout() {
     // Server clears the cookie; bounce to /login.
@@ -224,24 +329,42 @@ export default function Layout({ whoami }: LayoutProps) {
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="cl-header border-b border-tremor-border sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-6 min-w-0">
+    <div className="min-h-screen overflow-x-hidden">
+      <header className="cl-header border-b border-tremor-border sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 min-h-14 py-2 flex items-center gap-3 sm:gap-6 min-w-0">
+          {/* Mobile menu button */}
+          <button
+            type="button"
+            aria-label="Toggle navigation"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((o) => !o)}
+            className="md:hidden flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-tremor-border dark:border-dark-tremor-border text-tremor-content-subtle dark:text-dark-tremor-content-subtle hover:text-tremor-content-strong dark:hover:text-dark-tremor-content-strong"
+          >
+            {menuOpen ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            )}
+          </button>
           {/* Brand */}
-          <NavLink to="/" className="flex items-center gap-2.5 group shrink-0">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-tremor-brand shadow-[0_0_12px_var(--cl-glow)]">
+          <NavLink to="/" className="flex items-center gap-2.5 group shrink-0 min-w-0">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-tremor-brand shadow-[0_0_12px_var(--cl-glow)] shrink-0">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ stroke: "var(--cl-brand-inverted)" }} strokeWidth="2.5" strokeLinecap="round">
                 <path d="M4 17l4.5-5.5 3.5 3 5-7 3 3.5" />
               </svg>
             </span>
-            <span className="text-[15px] font-semibold tracking-tight text-tremor-content-strong dark:text-dark-tremor-content-strong">
+            <span className="text-[15px] font-semibold tracking-tight text-tremor-content-strong dark:text-dark-tremor-content-strong truncate">
               central-logs
             </span>
           </NavLink>
 
-          {/* Nav */}
-          <nav className="flex gap-1 shrink-0">
-            {navItems.map((n) => (
+          {/* Nav — desktop, primary pages only */}
+          <nav className="hidden md:flex gap-1 shrink-0">
+            {primaryNav.map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
@@ -259,17 +382,41 @@ export default function Layout({ whoami }: LayoutProps) {
             ))}
           </nav>
 
-          {/* Live status — single-line, abbreviated labels with hover tooltips */}
-          <HeaderStatus />
-
-          {/* User + preferences — pushed to the right edge */}
+          {/* User + preferences — pushed to the right edge. The avatar
+              menu also carries the live status + secondary pages. */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
             <ThemeMenu />
-            <UserMenu whoami={whoami} onLogout={onLogout} />
+            <UserMenu whoami={whoami} onLogout={onLogout} overflowLinks={overflowLinks} />
           </div>
         </div>
+
+        {/* Nav — mobile dropdown (all pages; live status lives in
+            the account menu on every viewport) */}
+        {menuOpen && (
+          <nav className="md:hidden border-t border-tremor-border dark:border-dark-tremor-border px-4 py-2">
+            <div className="grid grid-cols-2 gap-1">
+              {mobileNav.map((n) => (
+                <NavLink
+                  key={n.to}
+                  to={n.to}
+                  end={n.end}
+                  onClick={() => setMenuOpen(false)}
+                  className={({ isActive }) =>
+                    `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                      isActive
+                        ? "bg-tremor-brand-faint text-tremor-brand dark:bg-dark-tremor-brand-faint dark:text-dark-tremor-brand"
+                        : "text-tremor-content-subtle dark:text-dark-tremor-content-subtle hover:bg-tremor-background-subtle dark:hover:bg-dark-tremor-background-subtle hover:text-tremor-content-emphasis dark:hover:text-dark-tremor-content-emphasis"
+                    }`
+                  }
+                >
+                  {n.label}
+                </NavLink>
+              ))}
+            </div>
+          </nav>
+        )}
       </header>
-      <main className="max-w-7xl mx-auto px-6 py-6 animate-cl-fade-in">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 min-w-0 animate-cl-fade-in">
         <Outlet />
       </main>
     </div>

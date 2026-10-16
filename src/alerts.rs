@@ -472,7 +472,7 @@ fn evaluate_rule(conn: &Connection, rule: &ActiveRule, whitelist: &ColumnWhiteli
                 rule_id: rule.id,
                 error: format!(
                     "unsupported metric '{}' (expected volume, error_rate, \
-                     p50_latency, p95_latency, or p99_latency)",
+                     p50_latency, p95_latency, p99_latency, or web_pageviews:<site>)",
                     rule.metric
                 ),
             }
@@ -896,6 +896,20 @@ pub(crate) fn compare(value: f64, comparator: &str, threshold: f64) -> Result<bo
 /// `Ok(None)` means the metric name isn't recognized.
 fn resolve_metric(conn: &Connection, metric: &str, window_secs: i64) -> Result<Option<f64>> {
     let since = chrono::Utc::now() - chrono::Duration::seconds(window_secs);
+    // Web-analytics traffic, e.g. `web_pageviews:ajakan` — backs traffic-drop
+    // alerts created from the Web dashboard (reads web_rollup_1m, the same
+    // table the anomaly job uses).
+    if let Some(site) = metric.strip_prefix("web_pageviews:") {
+        if site.is_empty() || site.len() > 64 || site.contains('\'') {
+            return Ok(None);
+        }
+        let v: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(pageviews), 0) FROM web_rollup_1m WHERE bucket >= ? AND site_id = ?",
+            duckdb::params![since, site],
+            |r| r.get(0),
+        )?;
+        return Ok(Some(v as f64));
+    }
     match metric {
         "volume" => {
             let v: i64 = conn.query_row(
@@ -1268,8 +1282,7 @@ mod tests {
     }
 
     #[test]
-    fn error_rate_computed_from_rollup() {
-        let (_tmp, conn) = test_conn();
+    fn error_rate_computed_from_rollup() {        let (_tmp, conn) = test_conn();
         insert_rollup_point(&conn, 90, "info");
         insert_rollup_point(&conn, 10, "error");
         let value = resolve_metric(&conn, "error_rate", 3600).unwrap().unwrap();
@@ -1466,5 +1479,23 @@ mod tests {
             EvalOutcome::NotBreached { .. } => "NotBreached",
             EvalOutcome::Error { .. } => "Error",
         }
+    }
+
+    #[test]
+    fn web_pageviews_metric_reads_site_rollup() {
+        let (_tmp, conn) = test_conn();
+        let now = chrono::Utc::now();
+        conn.execute(
+            "INSERT INTO web_rollup_1m (bucket, site_id, pageviews, events) VALUES (?, 'ajakan', 7, 9), (?, 'other', 100, 100)",
+            duckdb::params![now, now],
+        )
+        .unwrap();
+        let value = resolve_metric(&conn, "web_pageviews:ajakan", 3600)
+            .unwrap()
+            .unwrap();
+        assert_eq!(value, 7.0, "scoped to the named site only");
+        // Empty / malformed site suffixes are unrecognized, not errors.
+        assert!(resolve_metric(&conn, "web_pageviews:", 3600).unwrap().is_none());
+        assert!(resolve_metric(&conn, "web_pageviews", 3600).unwrap().is_none());
     }
 }

@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use rand::{rngs::OsRng, RngCore};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::Result;
@@ -14,6 +15,11 @@ use crate::Result;
 const META_TABLE: TableDefinition<&str, &str> = TableDefinition::new("meta");
 const CHECKPOINT_TABLE: TableDefinition<u64, &[u8; 16]> = TableDefinition::new("checkpoints");
 const MIN_SEG_TABLE: TableDefinition<&str, u64> = TableDefinition::new("min_seg");
+/// Daily salts for the web-analytics visitor hash (PLAN-WEB-ANALYTICS W1):
+/// ISO date string → 32 random bytes. Salts older than two days are pruned —
+/// after that, past visitor hashes can no longer be reconstructed, which is
+/// exactly the privacy property we want (decision D5).
+const WEB_SALT_TABLE: TableDefinition<&str, &[u8; 32]> = TableDefinition::new("web_salts");
 
 /// Re-exported checkpoint coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +67,7 @@ impl WalMeta {
             let _ = tx.open_table(META_TABLE)?;
             let _ = tx.open_table(CHECKPOINT_TABLE)?;
             let _ = tx.open_table(MIN_SEG_TABLE)?;
+            let _ = tx.open_table(WEB_SALT_TABLE)?;
         }
         tx.commit()?;
         Ok(Self { db })
@@ -130,6 +137,63 @@ impl WalMeta {
         }
         Ok(out)
     }
+
+    // =================================================================
+    // Web-analytics visitor-hash salts (PLAN-WEB-ANALYTICS W1, D5)
+    // =================================================================
+
+    /// Salt for the given event date, creating a fresh random one on first
+    /// use (lazy). The date is the EVENT date, not the ingest date, so
+    /// late-arriving events hash consistently with same-day ones. Old salts
+    /// (≥ 2 days) are pruned opportunistically — hashes for those days become
+    /// unrecoverable by design.
+    pub fn web_salt_for_date(&self, date: chrono::NaiveDate) -> Result<[u8; 32]> {
+        let key = date.format("%Y-%m-%d").to_string();
+        let tx = self.db.begin_write()?;
+        let existing: Option<[u8; 32]> = {
+            let table = tx.open_table(WEB_SALT_TABLE)?;
+            let guard = table.get(key.as_str())?;
+            guard.map(|g| *g.value())
+        };
+        let salt = match existing {
+            Some(s) => s,
+            None => {
+                let mut s = [0u8; 32];
+                OsRng.fill_bytes(&mut s);
+                let mut table = tx.open_table(WEB_SALT_TABLE)?;
+                table.insert(key.as_str(), &s)?;
+                s
+            }
+        };
+        tx.commit()?;
+        Ok(salt)
+    }
+
+    /// Delete salts for dates strictly before `before` (keep ≥ 2 days so
+    /// pending WAL records can still be hashed consistently).
+    pub fn prune_web_salts(&self, before: chrono::NaiveDate) -> Result<usize> {
+        let tx = self.db.begin_write()?;
+        let mut table = tx.open_table(WEB_SALT_TABLE)?;
+        let mut removed = 0usize;
+        let stale: Vec<String> = table
+            .range::<&str>(..)?
+            .filter_map(|e| e.ok())
+            .filter_map(|(k, _)| {
+                let key = k.value().to_string();
+                chrono::NaiveDate::parse_from_str(&key, "%Y-%m-%d")
+                    .ok()
+                    .filter(|d| *d < before)
+                    .map(|_| key)
+            })
+            .collect();
+        for key in &stale {
+            table.remove(key.as_str())?;
+            removed += 1;
+        }
+        drop(table);
+        tx.commit()?;
+        Ok(removed)
+    }
 }
 
 /// Convenience trait so ingest workers can be parameterized over the store.
@@ -169,5 +233,27 @@ mod tests {
         let cp = meta.get_checkpoint(7).unwrap();
         assert_eq!(cp.segment_id, 3);
         assert_eq!(cp.byte_offset, 1234);
+    }
+
+    #[test]
+    fn web_salts_are_stable_per_day_and_pruned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta = WalMeta::open(&tmp.path().join("meta.redb")).unwrap();
+        let d0 = chrono::NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+        let d1 = chrono::NaiveDate::from_ymd_opt(2026, 1, 11).unwrap();
+
+        let a = meta.web_salt_for_date(d0).unwrap();
+        let b = meta.web_salt_for_date(d0).unwrap();
+        assert_eq!(a, b, "same day → same salt");
+        let c = meta.web_salt_for_date(d1).unwrap();
+        assert_ne!(a, c, "different day → different salt");
+
+        // Prune keeps d1 (not before d1) and drops d0.
+        let before = chrono::NaiveDate::from_ymd_opt(2026, 1, 11).unwrap();
+        assert_eq!(meta.prune_web_salts(before).unwrap(), 1);
+        // Recreating the pruned day's salt yields a DIFFERENT value — the old
+        // hash is unrecoverable (the privacy property).
+        let again = meta.web_salt_for_date(d0).unwrap();
+        assert_ne!(a, again);
     }
 }

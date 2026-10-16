@@ -52,6 +52,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         // Schema / discovery
         .route("/api/schema/hot", get(schema_hot))
+        .route("/api/services", get(list_services))
         // Logs explorer
         .route("/api/logs", get(logs_search))
         .route("/api/logs/export", get(logs_export))
@@ -143,6 +144,83 @@ async fn schema_hot(State(st): State<ApiState>) -> impl IntoResponse {
         hot,
         filterable_columns: filterable,
     })
+}
+
+// =====================================================================
+// Service registry — autocomplete source for `service:` filters
+// =====================================================================
+
+#[derive(Debug, Deserialize)]
+struct ServicesParams {
+    /// Optional case-insensitive substring filter on the service name.
+    #[serde(default)]
+    q: String,
+    /// Max rows. Default 100, hard cap 1000.
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct ServiceRow {
+    name: String,
+    last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    total: i64,
+}
+
+#[derive(Serialize)]
+struct ServicesResponse {
+    services: Vec<ServiceRow>,
+    /// Registry size (before the `q` filter) — drives "N services" labels.
+    total: i64,
+}
+
+/// List known services, most-recently-seen first. Reads the `services
+/// registry table maintained by the rollup job — no log scan, so it stays
+/// fast on any tier size. Powers the `service:` autocomplete in every filter
+/// input (logs explorer, alert rules, dashboard panels).
+async fn list_services(
+    State(st): State<ApiState>,
+    Query(p): Query<ServicesParams>,
+) -> impl IntoResponse {
+    let limit = p.limit.unwrap_or(100).clamp(1, 1000);
+    let conn = st.store.lock();
+    match query_services(&conn, &p.q, limit) {
+        Ok((services, total)) => Json(ServicesResponse { services, total }).into_response(),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("services query failed: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+fn query_services(
+    conn: &duckdb::Connection,
+    q: &str,
+    limit: i64,
+) -> crate::Result<(Vec<ServiceRow>, i64)> {
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM services", [], |r| r.get(0))
+        .unwrap_or(0);
+    // Escape LIKE metacharacters so `100%_x` matches literally.
+    let escaped = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let like = format!("%{escaped}%");
+    let mut stmt = conn.prepare(
+        "SELECT name, last_seen, total FROM services
+         WHERE ? = '' OR name ILIKE ? ESCAPE '\\'
+         ORDER BY last_seen DESC NULLS LAST, name ASC
+         LIMIT ?",
+    )?;
+    let services = stmt
+        .query_map(duckdb::params![q, like, limit], |r| {
+            Ok(ServiceRow {
+                name: r.get(0)?,
+                last_seen: r.get(1)?,
+                total: r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((services, total))
 }
 
 // =====================================================================
@@ -2664,5 +2742,57 @@ mod tests {
         };
         let (_, _, interval) = dashboard_range(&p);
         assert_eq!(interval, 3600, "7d span → hour buckets");
+    }
+
+    fn services_store() -> (tempfile::TempDir, crate::store::Store) {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::store::Store::open(
+            &tmp.path().join("t.duckdb"),
+            tmp.path().join("parquet"),
+            Vec::new(),
+        )
+        .unwrap();
+        (tmp, store)
+    }
+
+    fn seed_services(conn: &duckdb::Connection) {
+        let now = chrono::Utc::now();
+        for (i, name) in ["api", "web", "100%_odd"].iter().enumerate() {
+            let ts = now - chrono::Duration::minutes(i as i64 * 10);
+            conn.execute(
+                "INSERT INTO services (name, first_seen, last_seen, total) VALUES (?, ?, ?, ?)",
+                duckdb::params![name, ts, ts, (i as i64 + 1) * 10],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn services_query_orders_by_recency_and_filters() {
+        let (_tmp, store) = services_store();
+        let conn = store.lock();
+        seed_services(&conn);
+
+        let (rows, total) = query_services(&conn, "", 100).unwrap();
+        assert_eq!(total, 3);
+        assert_eq!(rows.len(), 3);
+        // Most-recently-seen first: api (now), web (-10m), 100%_odd (-20m).
+        assert_eq!(rows[0].name, "api");
+        assert_eq!(rows[0].total, 10);
+
+        let (rows, total) = query_services(&conn, "API", 100).unwrap();
+        assert_eq!(total, 3, "total ignores the q filter");
+        assert_eq!(rows.len(), 1, "ILIKE is case-insensitive");
+        assert_eq!(rows[0].name, "api");
+
+        // LIKE metacharacters match literally, not as wildcards.
+        let (rows, _) = query_services(&conn, "100%_odd", 100).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "100%_odd");
+        let (rows, _) = query_services(&conn, "%", 100).unwrap();
+        assert_eq!(rows.len(), 1, "bare % must not become a match-all");
+
+        let (rows, _) = query_services(&conn, "", 2).unwrap();
+        assert_eq!(rows.len(), 2, "limit honored");
     }
 }

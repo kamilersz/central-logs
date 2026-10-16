@@ -14,6 +14,10 @@ import AlertsPage from "./pages/AlertsPage";
 import ApiKeysPage from "./pages/ApiKeysPage";
 import PipelinePage from "./pages/PipelinePage";
 import StoragePage from "./pages/StoragePage";
+import WebProjectsPage from "./pages/WebProjectsPage";
+import WebAnalyticsPage from "./pages/WebAnalyticsPage";
+import WebRealtimePage from "./pages/WebRealtimePage";
+import ConnectPage from "./pages/ConnectPage";
 import ErrorsPage, { ErrorGroupDetailPage } from "./pages/ErrorsPage";
 import { api, WhoamiResponse } from "./api";
 
@@ -82,6 +86,10 @@ export default function App() {
           <Route path="errors/:fingerprint" element={<ErrorGroupDetailPage />} />
           <Route path="pipeline" element={<PipelinePage />} />
           <Route path="storage" element={<StoragePage />} />
+          <Route path="web" element={<WebAnalyticsPage />} />
+          <Route path="web/projects" element={<WebProjectsPage />} />
+          <Route path="web/realtime" element={<WebRealtimePage />} />
+          <Route path="connect" element={<ConnectPage />} />
           <Route
             path="api-keys"
             element={isAdmin ? <ApiKeysPage /> : <Navigate to="/" replace />}

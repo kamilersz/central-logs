@@ -273,10 +273,10 @@ async function putJson<T>(url: string, body: unknown): Promise<T> {
   return (await resp.json()) as T;
 }
 
-function buildQuery(params: Record<string, string | number | undefined>): string {
+function buildQuery(params: object): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== "") sp.set(k, String(v));
+    if (v !== undefined && v !== "" && v !== null) sp.set(k, String(v));
   }
   const s = sp.toString();
   return s ? `?${s}` : "";
@@ -313,6 +313,217 @@ export interface ForecastResponse {
   forecast?: ForecastPoint[];
   model?: string;
   error?: string;
+}
+
+// --- website analytics (PLAN-WEB-ANALYTICS W3; projects CRUD W5) ---
+export interface WebRangeParams {
+  site?: string;
+  from?: string;
+  to?: string;
+  window?: string;
+  include_internal?: boolean;
+  path?: string;
+}
+export interface WebStatsParams extends WebRangeParams {
+  metric?: "pageviews" | "events" | "visitors" | "sessions" | "bounce_rate" | "avg_duration";
+  interval?: "auto" | "1m" | "5m" | "1h" | "1d";
+}
+export interface WebPoint {
+  t: string;
+  v: number;
+}
+export interface WebStatsResponse {
+  metric: string;
+  interval: string;
+  from: string;
+  to: string;
+  points: WebPoint[];
+}
+export interface WebBreakdownParams extends WebRangeParams {
+  by?: "path" | "event" | "source" | "medium" | "country" | "region" | "city" | "screen" | "utm_source" | "utm_medium" | "utm_campaign" | "device" | "browser" | "os" | "entry_page" | "exit_page";
+  limit?: number;
+}
+export interface WebBreakdownRow {
+  value: string;
+  pageviews: number;
+  visitors: number;
+  sessions: number;
+}
+export interface WebBreakdownResponse {
+  by: string;
+  from: string;
+  to: string;
+  rows: WebBreakdownRow[];
+}
+export interface WebRealtimeResponse {
+  visitors_5m: number;
+  pages: { path: string; hits: number }[];
+}
+export interface WebVitalsRow {
+  metric: string;
+  path: string;
+  device: string;
+  p75: number;
+  samples: number;
+  good_pct: number;
+}
+export interface WebVitalsResponse {
+  from: string;
+  to: string;
+  rows: WebVitalsRow[];
+}
+export interface WebErrorsRow {
+  name: string;
+  path: string;
+  hits: number;
+  last_seen: string;
+}
+export interface WebErrorsResponse {
+  from: string;
+  to: string;
+  rows: WebErrorsRow[];
+}
+export interface WebSiteInfo {
+  id: string;
+  allowed_origins: string[];
+  has_user_header: boolean;
+  has_exclude_ips: boolean;
+  source: "config" | "db";
+}
+export interface WebSitesResponse {
+  enabled: boolean;
+  sites: WebSiteInfo[];
+}
+export interface WebTraceResponse {
+  trace_id: string;
+  web_events: Record<string, unknown>[];
+  logs: Record<string, unknown>[];
+}
+export interface WebSummaryResponse {
+  from: string;
+  to: string;
+  pageviews: number;
+  visitors: number;
+  sessions: number;
+  bounce_rate: number;
+  avg_duration_ms: number;
+}
+export interface WebFunnelStep {
+  step: number;
+  pattern: string;
+  sessions: number;
+  conversion_from_prev: number;
+  drop_off: number;
+}
+export interface WebFunnelResponse {
+  from: string;
+  to: string;
+  steps: WebFunnelStep[];
+  overall_conversion: number;
+}
+export interface WebSessionItem {
+  session_id: string;
+  start_ts: string;
+  end_ts: string;
+  entry_path: string | null;
+  exit_path: string | null;
+  pageviews: number;
+  events: number;
+  engaged_ms: number;
+  is_bounce: boolean;
+  source: string | null;
+  medium: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  device: string | null;
+  browser: string | null;
+  os: string | null;
+}
+export interface WebSessionsResponse {
+  from: string;
+  to: string;
+  sessions: WebSessionItem[];
+}
+export interface WebSessionEvent {
+  ts: string;
+  event: string;
+  name: string | null;
+  path: string | null;
+  value: number | null;
+  source: string | null;
+  medium: string | null;
+  country: string | null;
+  city: string | null;
+  device: string | null;
+  trace_id: string | null;
+}
+export interface WebSessionDetail {
+  session_id: string;
+  events: WebSessionEvent[];
+}
+export interface WebSourceDay {
+  day: string;
+  sessions: number;
+}
+export interface WebSourceRow {
+  medium: string;
+  sessions: number;
+  visitors: number;
+  bounce_rate: number;
+  daily: WebSourceDay[];
+}
+export interface WebSourcesResponse {
+  from: string;
+  to: string;
+  sources: WebSourceRow[];
+}
+export interface WebPageRow {
+  page: string;
+  sessions: number;
+  bounce_rate?: number;
+  pageviews?: number;
+  visitors?: number;
+  daily: { day: string; sessions?: number; pageviews?: number }[];
+}
+export interface WebPagesResponse {
+  from: string;
+  to: string;
+  entry: WebPageRow[];
+  top: WebPageRow[];
+  exit: WebPageRow[];
+}
+export interface WebLinkRow {
+  host: string | null;
+  path: string;
+  hits: number;
+}
+export interface WebLinksResponse {
+  kind: string;
+  from: string;
+  to: string;
+  rows: WebLinkRow[];
+}
+export interface WebCustomRow {
+  name: string;
+  hits: number;
+  visitors: number;
+}
+export interface WebCustomResponse {
+  from: string;
+  to: string;
+  rows: WebCustomRow[];
+}
+
+// --- service registry (autocomplete for `service:` filters) ---
+export interface ServiceInfo {
+  name: string;
+  last_seen: string | null;
+  total: number;
+}
+export interface ServicesResponse {
+  services: ServiceInfo[];
+  total: number;
 }
 
 export interface PipelineStatus {
@@ -491,6 +702,77 @@ export const api = {
     getJson<AnomalyRow[]>(`/api/dashboard/anomalies${buildQuery(params as Record<string, string | number | undefined>)}`),
   forecast: (params: DashboardParams) =>
     getJson<ForecastResponse>(`/api/dashboard/forecast${buildQuery(params as Record<string, string | number | undefined>)}`),
+
+  // --- website analytics (PLAN-WEB-ANALYTICS W3; projects CRUD W5) ---
+  webStats: (params: WebStatsParams) =>
+    getJson<WebStatsResponse>(`/api/web/stats${buildQuery(params as Record<string, string | number | undefined>)}`),
+  webBreakdown: (params: WebBreakdownParams) =>
+    getJson<WebBreakdownResponse>(`/api/web/breakdown${buildQuery(params as Record<string, string | number | undefined>)}`),
+  webRealtime: (siteOrParams?: string | WebRangeParams) =>
+    getJson<WebRealtimeResponse>(
+      `/api/web/realtime${buildQuery(
+        typeof siteOrParams === "string" ? { site: siteOrParams } : siteOrParams ?? {},
+      )}`,
+    ),
+  webVitals: (params: WebRangeParams & { path?: string }) =>
+    getJson<WebVitalsResponse>(`/api/web/vitals${buildQuery(params as Record<string, string | number | undefined>)}`),
+  webErrors: (params: WebRangeParams & { limit?: number }) =>
+    getJson<WebErrorsResponse>(`/api/web/errors${buildQuery(params as Record<string, string | number | undefined>)}`),
+  webSites: () => getJson<WebSitesResponse>("/api/web/sites"),
+  webCreateSite: (body: { id: string; allowed_origins: string[]; user_header?: string; exclude_ips?: string[] }) =>
+    postJson<{ status: string; id: string }>("/api/web/sites", body),
+  webUpdateSite: (
+    id: string,
+    body: { allowed_origins: string[]; user_header?: string; exclude_ips?: string[] },
+  ) => putJson<{ status: string; id: string }>(`/api/web/sites/${encodeURIComponent(id)}`, body),
+  webDeleteSite: (id: string) =>
+    delJson<{ status: string; id: string }>(`/api/web/sites/${encodeURIComponent(id)}`),
+  webTrace: (traceId: string) =>
+    getJson<WebTraceResponse>(`/api/web/trace/${encodeURIComponent(traceId)}`),
+  webSummary: (params: WebRangeParams) =>
+    getJson<WebSummaryResponse>(`/api/web/summary${buildQuery(params as Record<string, string | number | boolean | undefined>)}`),
+  webFunnel: (params: WebRangeParams & { steps: string }) =>
+    getJson<WebFunnelResponse>(`/api/web/funnel${buildQuery(params)}`),
+  webSessions: (params: WebRangeParams & { limit?: number }) =>
+    getJson<WebSessionsResponse>(`/api/web/sessions${buildQuery(params as Record<string, string | number | boolean | undefined>)}`),
+  webSessionDetail: (id: string) =>
+    getJson<WebSessionDetail>(`/api/web/sessions/${encodeURIComponent(id)}`),
+  webExportCsv: async (params: WebRangeParams & { view?: "events" | "sessions"; limit?: number }): Promise<void> => {
+    const resp = await fetch(
+      `/api/web/export${buildQuery(params as Record<string, string | number | boolean | undefined>)}`,
+      { credentials: "same-origin" },
+    );
+    redirectToLoginIfUnauthorized(resp.status);
+    if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}: ${await resp.text()}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "web-analytics.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
+
+  // --- Statcounter-style reports (sources, pages, links, custom) ---
+  webSources: (params: WebRangeParams & { limit?: number }) =>
+    getJson<WebSourcesResponse>(`/api/web/sources${buildQuery(params as Record<string, string | number | undefined>)}`),
+  webPages: (params: WebRangeParams & { limit?: number }) =>
+    getJson<WebPagesResponse>(`/api/web/pages${buildQuery(params as Record<string, string | number | undefined>)}`),
+  webLinks: (params: WebRangeParams & { kind?: string; limit?: number }) =>
+    getJson<WebLinksResponse>(`/api/web/links${buildQuery(params as Record<string, string | number | undefined>)}`),
+  webCustom: (params: WebRangeParams & { limit?: number }) =>
+    getJson<WebCustomResponse>(`/api/web/custom${buildQuery(params as Record<string, string | number | undefined>)}`),
+
+  // --- service registry (`GET /api/services`) ---
+  listServices: (q?: string, limit?: number) =>
+    getJson<ServicesResponse>(
+      `/api/services${buildQuery({ q, limit } as Record<string, string | number | undefined>)}`,
+    ),
   listDashboards: () => getJson<DashboardConfig[]>("/api/dashboard/configs"),
   getDashboard: (id: number) => getJson<DashboardConfig>(`/api/dashboard/configs/${id}`),
   saveDashboard: (body: { name: string; description?: string; panels: unknown }) =>

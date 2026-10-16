@@ -17,12 +17,12 @@ export default function DashboardsPage() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
+        <div className="min-w-0">
           <h2 className="text-xl font-semibold">Dashboards</h2>
           <p className="text-sm text-tremor-content-subtle">Built-in presets + your saved dashboards</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link
             to="/dashboards/ai"
             className="px-3 py-1.5 rounded-md border border-tremor-border dark:border-dark-tremor-border text-sm hover:bg-tremor-background-muted dark:hover:bg-dark-tremor-background-muted"
@@ -39,7 +39,7 @@ export default function DashboardsPage() {
       </div>
 
       <h3 className="text-sm font-medium mb-2 text-tremor-content-subtle">Presets</h3>
-      <div className="grid grid-cols-2 gap-3 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
         {presets.map((p) => (
           <Link
             key={p.path}
@@ -54,7 +54,7 @@ export default function DashboardsPage() {
 
       <h3 className="text-sm font-medium mb-2 text-tremor-content-subtle">Your dashboards</h3>
       {error && <div className="text-red-600 text-sm">{error}</div>}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {(dashboards ?? []).map((d) => (
           <Link
             key={d.id}
@@ -71,7 +71,7 @@ export default function DashboardsPage() {
           </Link>
         ))}
         {!error && (dashboards ?? []).length === 0 && (
-          <div className="text-sm text-tremor-content-subtle col-span-2">
+          <div className="text-sm text-tremor-content-subtle col-span-1 sm:col-span-2">
             No saved dashboards yet. <Link to="/dashboards/new" className="underline">Create one →</Link>
           </div>
         )}

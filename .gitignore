@@ -14,6 +14,9 @@ data*
 *.duckdb.wal
 *.redb
 
+# GeoIP database (fetched via scripts/fetch-geolite.sh, needs a license key)
+/geoip/
+
 # Local config with secrets — copy central-logs.toml.example and edit locally
 /central-logs.toml
 /config.local.toml

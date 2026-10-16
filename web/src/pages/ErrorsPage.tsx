@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button, Card, Select, SelectItem } from "@tremor/react";
 import { usePoll, LevelBadge } from "../components";
+import { trackEvent } from "../track";
 import DsnWizard from "../components/DsnWizard";
 import {
   api,
@@ -100,6 +101,16 @@ export default function ErrorsPage() {
     15000,
     [status, window_, sort, q],
   );
+
+  // Dogfood: log the settled filter state (q is already debounced above).
+  const lastTracked = useRef("");
+  useEffect(() => {
+    const key = JSON.stringify({ status, window: window_, sort, q });
+    if (key !== lastTracked.current) {
+      lastTracked.current = key;
+      trackEvent("ui.errors.filter", { status, window: window_, sort, q });
+    }
+  }, [status, window_, sort, q]);
 
   const groups = data?.groups ?? [];
 
@@ -235,11 +246,12 @@ export function ErrorGroupDetailPage() {
     [fingerprint],
   );
 
-  async function act(fn: () => Promise<unknown>) {
+  async function act(action: "resolve" | "ignore" | "reopen", fn: () => Promise<unknown>) {
     setBusy(true);
     setActionError(null);
     try {
       await fn();
+      trackEvent("ui.errors.group_action", { action, fingerprint });
       refresh();
     } catch (e) {
       setActionError(String(e));
@@ -301,15 +313,15 @@ export function ErrorGroupDetailPage() {
               </a>
               {g.status === "unresolved" ? (
                 <>
-                  <Button size="xs" variant="secondary" loading={busy} onClick={() => act(() => api.resolveErrorGroup(g.fingerprint))}>
+                  <Button size="xs" variant="secondary" loading={busy} onClick={() => act("resolve", () => api.resolveErrorGroup(g.fingerprint))}>
                     Resolve
                   </Button>
-                  <Button size="xs" variant="light" loading={busy} onClick={() => act(() => api.ignoreErrorGroup(g.fingerprint))}>
+                  <Button size="xs" variant="light" loading={busy} onClick={() => act("ignore", () => api.ignoreErrorGroup(g.fingerprint))}>
                     Ignore
                   </Button>
                 </>
               ) : (
-                <Button size="xs" variant="secondary" loading={busy} onClick={() => act(() => api.unresolveErrorGroup(g.fingerprint))}>
+                <Button size="xs" variant="secondary" loading={busy} onClick={() => act("reopen", () => api.unresolveErrorGroup(g.fingerprint))}>
                   Re-open
                 </Button>
               )}

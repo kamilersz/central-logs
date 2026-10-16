@@ -23,6 +23,11 @@ pub struct InsertCounters {
     /// (LESSON_LEARNED: "we cannot afford to lose any audit data" — at
     /// least make the loss visible). Surfaced in /api/counters + /metrics.
     pub audit_dropped_total: u64,
+    /// Website-analytics beacons refused, grouped by reason (PLAN-WEB-ANALYTICS
+    /// W1): `dnt`, `gpc`, `rate_limited`, `shed`, `bad_payload`, `unknown_site`,
+    /// `origin_denied`, `too_many_events`, `paused`. Analytics is shed before
+    /// logs ever are, so its losses must be visible.
+    pub web_rejected_total: HashMap<&'static str, u64>,
     pub per_protocol: HashMap<&'static str, ProtocolCounters>,
 }
 
@@ -64,6 +69,14 @@ impl InsertCountersRef {
     /// Count a dropped self-audit event (WAL channel saturated).
     pub fn record_audit_drop(&self) {
         self.inner.lock().audit_dropped_total += 1;
+    }
+
+    /// Count a refused web-analytics beacon by reason (dnt, rate_limited,
+    /// shed, bad_payload, …).
+    pub fn record_web_rejected(&self, reason: &'static str) {
+        let mut c = self.inner.lock();
+        c.errors_total += 1;
+        *c.web_rejected_total.entry(reason).or_insert(0) += 1;
     }
 
     pub fn snapshot(&self) -> InsertCounters {

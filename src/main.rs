@@ -13,6 +13,7 @@ use central_logs::config::{Cli, McpMode};
 use central_logs::ingest::enrich::Enricher;
 use central_logs::ingest::parse::Parser as LogParser;
 use central_logs::ingest::spawn_ingest_workers;
+use central_logs::ingest::web::WebParser;
 use central_logs::insert::counters::InsertCountersRef;
 use central_logs::insert::http::{router as http_router, InsertState};
 use central_logs::insert::syslog::{spawn_syslog_listeners, SyslogState};
@@ -128,6 +129,22 @@ async fn main() -> anyhow::Result<()> {
         cfg.unwrap_message_json,
     ));
 
+    // Web-analytics project registry (PLAN-WEB-ANALYTICS.md W5): config
+    // `[[web.site]]` seeds merged with DB-created `web_sites` rows, shared
+    // between the collector hot path and the CRUD API. `Store::open_with`
+    // above already applied the schema, so the table exists here.
+    let web_sites = central_logs::insert::web::WebSites::seeded(&cfg.web);
+    if cfg.web.enabled {
+        let conn = store.conn();
+        let guard = conn.lock();
+        let n = web_sites.load_from_db(&guard);
+        tracing::info!(
+            config = cfg.web.site.len(),
+            db = n,
+            "web-analytics projects loaded"
+        );
+    }
+
     // Open WAL writer; hand out InsertHandle to insert endpoints.
     let (writer, handle) = WalWriter::new(
         cfg.data_dir.join("wal"),
@@ -157,11 +174,19 @@ async fn main() -> anyhow::Result<()> {
 
     let enricher = Arc::new(Enricher::new(
         #[cfg(feature = "geoip")]
-        geo,
+        geo.clone(),
         "unknown",
         &hostname::get()
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "localhost".to_string()),
+    ));
+
+    // Web-analytics ingest parser (PLAN-WEB-ANALYTICS W1): shares the GeoIP
+    // handle and the WAL meta (for the daily visitor-hash salts).
+    let web_parser = Arc::new(WebParser::new(
+        meta.clone(),
+        #[cfg(feature = "geoip")]
+        geo.clone(),
     ));
 
     // Cancellation token for graceful shutdown.
@@ -285,6 +310,7 @@ async fn main() -> anyhow::Result<()> {
         store.clone(),
         enricher.clone(),
         parser.clone(),
+        web_parser.clone(),
         cfg.ingest_batch_size,
         cfg.ingest_flush_interval(),
         error_tracker.clone(),
@@ -303,6 +329,63 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(cfg.service_retention.clone()),
         cfg.compaction_interval(),
     );
+
+    // Website-analytics background jobs (PLAN-WEB-ANALYTICS W3/W4):
+    // sessionizer + rollup on a short cadence; compaction/retention on the
+    // SEPARATE web parquet dir with `web.raw_retention_days`.
+    if cfg.web.enabled {
+        let _web_job = central_logs::store::web::spawn_web_job(
+            store.clone(),
+            central_logs::store::web::WebJobConfig {
+                session_gap_minutes: cfg.web.session_gap_minutes,
+                ..Default::default()
+            },
+            std::time::Duration::from_secs(30),
+        );
+        let compact_store = store.clone();
+        let compact_dir = central_logs::store::schema::web_parquet_dir(&cfg.parquet_dir);
+        let compact_retention = cfg.web.raw_retention_days as i64;
+        let compact_codec = cfg.parquet_compression.clone();
+        let compact_hot_hours = cfg
+            .retention
+            .hot_max_age_duration(cfg.hot_tier_hours)
+            .num_hours()
+            .max(1);
+        let compact_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            let mut t = tokio::time::interval(std::time::Duration::from_secs(600));
+            t.tick().await; // skip immediate first tick
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = compact_shutdown.cancelled() => break,
+                    _ = t.tick() => {
+                        let conn = compact_store.lock();
+                        let cutoff =
+                            chrono::Utc::now() - chrono::Duration::hours(compact_hot_hours);
+                        match central_logs::store::web::web_compact_once(
+                            &conn,
+                            &compact_dir,
+                            cutoff,
+                            compact_retention,
+                            &compact_codec,
+                        ) {
+                            Ok(s) if s.exported_files > 0 || s.purged_partitions > 0 => {
+                                tracing::info!(
+                                    files = s.exported_files,
+                                    deleted = s.deleted_hot_rows,
+                                    purged = s.purged_partitions,
+                                    "web compaction pass"
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => tracing::warn!(?e, "web compaction pass failed"),
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Optional object-storage cold-tier archive (feature: object-storage).
     // Mirrors compacted Parquet to S3/GCS and follows local retention.
@@ -528,6 +611,33 @@ async fn main() -> anyhow::Result<()> {
             },
         ));
 
+    // First-party website analytics collector (PLAN-WEB-ANALYTICS.md).
+    // Route-scoped small body cap: beacons are tiny, and the public endpoint
+    // must not be able to claim the global 16 MiB allowance (plan §4.10).
+    if cfg.web.enabled {
+        tracing::info!(
+            sites = cfg.web.site.len(),
+            max_beacon_bytes = cfg.web.max_beacon_bytes,
+            "web analytics collector enabled"
+        );
+        let web_router = central_logs::insert::web::router(central_logs::insert::web::WebState::new(
+            handle.clone(),
+            counters.clone(),
+            cfg.insert_backpressure_timeout(),
+            Arc::new(cfg.web.clone()),
+            web_sites.clone(),
+            wal_gauges.clone(),
+            ingest_paused.clone(),
+        )
+        // Persist trust-on-first-use auto-provisioned projects (first
+        // beacon of an unknown id creates the DB row).
+        .with_auto_create_store(store.clone()))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            cfg.web.max_beacon_bytes,
+        ));
+        http_app = http_app.merge(web_router);
+    }
+
     // Shared alert-notification infrastructure (HTTP for webhook/telegram
     // test sends, SMTP config for email channels).
     let smtp = Arc::new(cfg.smtp.clone());
@@ -574,6 +684,16 @@ async fn main() -> anyhow::Result<()> {
         // Housekeeping surface: storage overview, cold-tier browsing,
         // backup/restore (admin-gated writes).
         let ops_r = central_logs::web::ops_api::router(api_state.clone());
+
+        // Website-analytics query API (PLAN-WEB-ANALYTICS W3): /api/web/*
+        // inherits `Scope::Read` from the auth middleware's /api/* rule.
+        let analytics_r = central_logs::web::analytics_api::router(
+            central_logs::web::analytics_api::WebApiState {
+                store: store.clone(),
+                web_cfg: Arc::new(cfg.web.clone()),
+                sites: web_sites.clone(),
+            },
+        );
 
         // Error-groups management API (list / detail / resolve / AI explain).
         let errors_r = central_logs::web::errors_api::router(api_state);
@@ -703,12 +823,13 @@ async fn main() -> anyhow::Result<()> {
             .merge(api_r)
             .merge(errors_r)
             .merge(ops_r)
+            .merge(analytics_r)
             .merge(sentry_r)
             .merge(auth_r)
             .merge(spa_r);
 
         tracing::info!(
-            "routers merged: dashboard + api + errors + sentry + auth + spa (axum will try more-specific routes before the SPA catch-all)"
+            "routers merged: dashboard + api + errors + ops + analytics + sentry + auth + spa (axum will try more-specific routes before the SPA catch-all)"
         );
 
         // Apply the auth middleware as the OUTERMOST layer so unauthorized
@@ -885,6 +1006,9 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) = run_anomaly_cycle(&anom_store) {
                         tracing::warn!(?e, "anomaly cycle failed");
                     }
+                    if let Err(e) = run_web_anomaly_cycle(&anom_store) {
+                        tracing::warn!(?e, "web anomaly cycle failed");
+                    }
                 }
             }
         }
@@ -968,6 +1092,96 @@ fn run_anomaly_cycle(store: &Store) -> anyhow::Result<()> {
     tx.commit()?;
     tracing::info!(n = anomalies.len(), "anomalies detected");
     Ok(())
+}
+
+/// Per-site web-pageview anomaly detection (PLAN-WEB-ANALYTICS W4): each
+/// site's `web_rollup_1m` series gets its own detectors; findings are stored
+/// as `web_pageviews:<site>` in `anomalies`. A sudden DROP is tagged as a
+/// possible broken tracker (helps distinguish "traffic died" from "snippet
+/// removed").
+fn run_web_anomaly_cycle(store: &Store) -> anyhow::Result<()> {
+    use duckdb::params;
+    let conn = store.conn();
+    let conn = conn.lock();
+    let sites: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT DISTINCT site_id FROM web_rollup_1m")?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .collect();
+        rows
+    };
+    let mut total = 0usize;
+    for site in sites {
+        let mut stmt = conn.prepare(
+            "SELECT bucket, SUM(pageviews)::DOUBLE FROM web_rollup_1m
+             WHERE site_id = ?
+             GROUP BY 1 ORDER BY 1 DESC LIMIT 120",
+        )?;
+        let pairs: Vec<(chrono::DateTime<chrono::Utc>, f64)> = stmt
+            .query_map([&site], |row| {
+                Ok((
+                    row.get::<_, chrono::DateTime<chrono::Utc>>(0)?,
+                    row.get::<_, f64>(1)?,
+                ))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+        if pairs.len() < 5 {
+            continue;
+        }
+        let (mut ts, mut vs): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+        ts.reverse();
+        vs.reverse();
+        let metric = format!("web_pageviews:{site}");
+        let mut anomalies = detect_anomalies_once(&metric, &vs, &ts, 3.0)?;
+        // A sharp recent drop (last point < 30% of the median of the prior
+        // window) is more likely a broken tracker than real traffic loss.
+        if let (Some(last), Some(prev_median)) = (vs.last(), median(&vs[..vs.len() - 1])) {
+            if *last < 0.3 * prev_median {
+                anomalies.push(central_logs::analytics::anomaly::AnomalyResult {
+                    ts: *ts.last().unwrap(),
+                    metric: metric.clone(),
+                    score: if prev_median > 0.0 {
+                        (prev_median - last) / prev_median
+                    } else {
+                        1.0
+                    },
+                    method: central_logs::analytics::anomaly::AnomalyMethod::Mad,
+                    severity: "warning".into(),
+                });
+            }
+        }
+        if anomalies.is_empty() {
+            continue;
+        }
+        let tx = conn.unchecked_transaction()?;
+        {
+            let mut ins = tx.prepare(
+                "INSERT INTO anomalies (ts, metric, score, method, severity) VALUES (?, ?, ?, ?, ?)",
+            )?;
+            for a in &anomalies {
+                ins.execute(params![a.ts, &a.metric, a.score, a.method.as_str(), &a.severity])?;
+            }
+        }
+        tx.commit()?;
+        total += anomalies.len();
+    }
+    if total > 0 {
+        tracing::info!(n = total, "web anomalies detected");
+    }
+    Ok(())
+}
+
+/// Median of a slice (small helper; the detector's own stats live in augurs).
+fn median(v: &[f64]) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    let mut s = v.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(s[s.len() / 2])
 }
 
 mod hostname {

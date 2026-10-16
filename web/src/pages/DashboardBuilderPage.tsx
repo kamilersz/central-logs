@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type AiDashboardQuestion, type Panel } from "../api";
-import { TIME_WINDOWS, toLocalInput } from "../components";
+import { TIME_WINDOWS, toLocalInput, FilterInput } from "../components";
 
 type PanelType = Panel["type"];
 type PanelViz = NonNullable<Panel["viz"]>;
@@ -173,7 +173,7 @@ export default function DashboardBuilderPage() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <h2 className="text-xl font-semibold">{isEdit ? "Edit dashboard" : "New dashboard"}</h2>
         <div className="flex gap-2">
           <button
@@ -194,7 +194,7 @@ export default function DashboardBuilderPage() {
 
       {error && <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-800 rounded-md text-sm">{error}</div>}
 
-      <div className="grid grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         <div>
           <label className="text-xs text-tremor-content-subtle">Name</label>
           <input
@@ -222,7 +222,7 @@ export default function DashboardBuilderPage() {
           the user can answer + re-submit without leaving the editor. */}
       <div className="p-4 cl-card mb-6 bg-tremor-background-muted dark:bg-dark-tremor-background-muted">
         <label className="text-xs text-tremor-content-subtle">Modify with AI</label>
-        <div className="flex gap-2 mt-1">
+        <div className="flex flex-col sm:flex-row gap-2 mt-1">
           <input
             type="text"
             value={aiPrompt}
@@ -302,12 +302,12 @@ export default function DashboardBuilderPage() {
             key={p.id}
             className="p-4 cl-card"
           >
-            <div className="grid grid-cols-12 gap-3 items-end">
-              <div className="col-span-1 flex flex-col gap-1">
+            <div className="grid grid-cols-2 sm:grid-cols-12 gap-3 items-end">
+              <div className="col-span-2 sm:col-span-1 flex flex-row sm:flex-col gap-1">
                 <button
                   onClick={() => move(p.id, -1)}
                   disabled={i === 0}
-                  className="px-2 py-0.5 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
+                  className="flex-1 sm:flex-none px-2 py-0.5 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
                   title="Move up"
                 >
                   ↑
@@ -315,13 +315,13 @@ export default function DashboardBuilderPage() {
                 <button
                   onClick={() => move(p.id, 1)}
                   disabled={i === panels.length - 1}
-                  className="px-2 py-0.5 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
+                  className="flex-1 sm:flex-none px-2 py-0.5 rounded-md text-xs border border-tremor-border dark:border-dark-tremor-border disabled:opacity-30"
                   title="Move down"
                 >
                   ↓
                 </button>
               </div>
-              <div className="col-span-3">
+              <div className="col-span-2 sm:col-span-3">
                 <label className="text-xs text-tremor-content-subtle">Title</label>
                 <input
                   type="text"
@@ -330,7 +330,7 @@ export default function DashboardBuilderPage() {
                   className={inputCls}
                 />
               </div>
-              <div className="col-span-2">
+              <div className="col-span-1 sm:col-span-2">
                 <label className="text-xs text-tremor-content-subtle">Type</label>
                 <select
                   value={p.type}
@@ -344,7 +344,7 @@ export default function DashboardBuilderPage() {
                   ))}
                 </select>
               </div>
-              <div className="col-span-2">
+              <div className="col-span-1 sm:col-span-2">
                 <label className="text-xs text-tremor-content-subtle">Visualization</label>
                 <select
                   value={p.viz ?? "chart"}
@@ -358,7 +358,7 @@ export default function DashboardBuilderPage() {
                   ))}
                 </select>
               </div>
-              <div className="col-span-2">
+              <div className="col-span-1 sm:col-span-2">
                 <label className="text-xs text-tremor-content-subtle">Width</label>
                 <select
                   value={p.w ?? 6}
@@ -372,7 +372,7 @@ export default function DashboardBuilderPage() {
                   ))}
                 </select>
               </div>
-              <div className="col-span-2">
+              <div className="col-span-1 sm:col-span-2">
                 <label className="text-xs text-tremor-content-subtle">Period</label>
                 <select
                   value={p.window}
@@ -389,7 +389,7 @@ export default function DashboardBuilderPage() {
               </div>
             </div>
             {p.window === "custom" && (
-              <div className="grid grid-cols-2 gap-3 mt-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                 <div>
                   <label className="text-xs text-tremor-content-subtle">From</label>
                   <input
@@ -410,18 +410,17 @@ export default function DashboardBuilderPage() {
                 </div>
               </div>
             )}
-            <div className="grid grid-cols-12 gap-3 mt-3 items-end">
-              <div className="col-span-11">
+            <div className="grid grid-cols-2 sm:grid-cols-12 gap-3 mt-3 items-end">
+              <div className="col-span-2 sm:col-span-11 min-w-0">
                 <label className="text-xs text-tremor-content-subtle">Filter DSL (optional)</label>
-                <input
-                  type="text"
+                <FilterInput
                   value={p.filter}
-                  onChange={(e) => update(p.id, { filter: e.target.value })}
+                  onChange={(v) => update(p.id, { filter: v })}
                   placeholder="service:api level:error"
                   className={`${inputCls} font-mono`}
                 />
               </div>
-              <div className="col-span-1">
+              <div className="col-span-2 sm:col-span-1">
                 <button
                   onClick={() => remove(p.id)}
                   disabled={panels.length === 1}

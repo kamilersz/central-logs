@@ -21,6 +21,9 @@ the same host under `/` (Read the Docs renders the rest of the docs).
   forecast overlay. SPA + JSON API.
 - **Error tracking**: Sentry-compatible ingest, fingerprint grouping,
   Errors SPA page, AI explain.
+- **Web analytics**: first-party cookieless tracker (`/v1/web/t.js` +
+  `/v1/web/collect`), per-project scopes with trust-on-first-use
+  auto-provisioning, Web SPA pages, `/api/web/*` query API.
 - **Alerts**: filter DSL + threshold / anomaly / count /
   error-group-threshold conditions; email / Telegram / webhook channels.
 - **AI features**: 5 MCP tools + an LLM-backed natural-language → filter
@@ -41,6 +44,7 @@ the same host under `/` (Read the Docs renders the rest of the docs).
 - Operations — /OPERATIONS.md/
 - Architecture — /ARCHITECTURE.md/
 - Error tracking — /ERROR_TRACKING.md/
+- Web analytics — /web-analytics/
 - Project status — /STATUS.md/
 - Development — /DEVELOPMENT.md/
 - Integration samples — /integration-sample/README.md

@@ -71,6 +71,7 @@ fn protocol_tag(p: Protocol) -> u8 {
         Protocol::K8sAudit => 11,
         Protocol::DockerApi => 12,
         Protocol::K8sApi => 13,
+        Protocol::WebEvent => 14,
     }
 }
 
@@ -89,6 +90,7 @@ fn protocol_from_tag(tag: u8) -> Result<Protocol> {
         11 => Protocol::K8sAudit,
         12 => Protocol::DockerApi,
         13 => Protocol::K8sApi,
+        14 => Protocol::WebEvent,
         other => {
             return Err(Error::invalid_input(format!(
                 "unknown protocol tag {other}"
@@ -249,6 +251,7 @@ mod tests {
             Protocol::K8sAudit,
             Protocol::DockerApi,
             Protocol::K8sApi,
+            Protocol::WebEvent,
         ] {
             let rec = sample(p);
             let mut buf = Vec::new();

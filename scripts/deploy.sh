@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy a central-logs update to EVERY instance.
 #
-# The four instances are separate per-client data silos that share one binary,
+# The six instances are separate per-client data silos that share one binary,
 # so they must all be rebuilt and restarted together.
 #
 # Typical use on the server, after pushing from your machine:
@@ -19,8 +19,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-UNITS=(central-logs central-logs-8085 central-logs-8086 central-logs-8087)
-PORTS=(8084 8085 8086 8087)
+UNITS=(central-logs-8079 central-logs central-logs-8085 central-logs-8086 central-logs-8087 central-logs-8088)
+PORTS=(8079 8084 8085 8086 8087 8088)
 BIN="target/release/central-logs"
 PREV="${BIN}.prev"
 
@@ -91,8 +91,11 @@ if [[ -f "$BIN" ]]; then
   echo "saved rollback binary → $PREV"
 fi
 
-echo "+ cargo build --release --locked"
-cargo build --release --locked
+echo "+ cargo build --release --locked --features geoip"
+# geoip: enables the MaxMind path (country/region/city from GeoLite2-City).
+# Without a DB file at [geoip_db_path] the enricher logs one warning at boot
+# and country still resolves via Cloudflare's CF-IPCountry header — safe.
+cargo build --release --locked --features geoip
 
 echo "+ restarting ${#UNITS[@]} instances"
 restart_all

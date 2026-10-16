@@ -129,6 +129,35 @@
   --cl-chart-grid: #292e42;
 }
 
+/* Tokyo Day — the official light counterpart to Tokyo Night. */
+[data-theme="tokyo-day"] {
+  --cl-bg: #e1e2e7;
+  --cl-bg-muted: #d5d6db;
+  --cl-bg-subtle: #c9cddb;
+  --cl-bg-emphasis: #b6bbcf;
+  --cl-border: #c4c8da;
+  --cl-ring: rgba(46, 125, 233, 0.4);
+  --cl-content: #414966;
+  --cl-content-subtle: #848cb5;
+  --cl-content-emphasis: #2f3a5c;
+  --cl-content-strong: #1a1f3c;
+  --cl-content-inverted: #e1e2e7;
+  --cl-brand: #2e7de9;
+  --cl-brand-faint: #d9e7fb;
+  --cl-brand-muted: #bcd6f5;
+  --cl-brand-subtle: #8bbaf0;
+  --cl-brand-emphasis: #1a5fb8;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(46, 125, 233, 0.25);
+  --cl-shadow: rgba(60, 67, 94, 0.15);
+  --cl-header-bg: rgba(225, 226, 231, 0.92);
+  --cl-selection-bg: rgba(46, 125, 233, 0.22);
+  --cl-selection-fg: #1a1f3c;
+  --cl-focus: rgba(46, 125, 233, 0.55);
+  --cl-scrollbar-thumb: #b6bbcf;
+  --cl-chart-grid: #c9cddb;
+}
+
 [data-theme="dracula"] {
   --cl-bg: #282a36;
   --cl-bg-muted: #21222c;
@@ -185,6 +214,35 @@
   --cl-chart-grid: #3b4252;
 }
 
+/* Nord Light — Snow Storm whites with Frost blue accents. */
+[data-theme="nord-light"] {
+  --cl-bg: #eceff4;
+  --cl-bg-muted: #e5e9f0;
+  --cl-bg-subtle: #d8dee9;
+  --cl-bg-emphasis: #c6cfdd;
+  --cl-border: #c6cfdd;
+  --cl-ring: rgba(94, 129, 172, 0.4);
+  --cl-content: #434c5e;
+  --cl-content-subtle: #7b88a1;
+  --cl-content-emphasis: #2e3440;
+  --cl-content-strong: #242b38;
+  --cl-content-inverted: #eceff4;
+  --cl-brand: #5e81ac;
+  --cl-brand-faint: #dfe7f0;
+  --cl-brand-muted: #c3d2e3;
+  --cl-brand-subtle: #8aa9c7;
+  --cl-brand-emphasis: #466383;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(94, 129, 172, 0.25);
+  --cl-shadow: rgba(46, 52, 64, 0.12);
+  --cl-header-bg: rgba(236, 239, 244, 0.92);
+  --cl-selection-bg: rgba(94, 129, 172, 0.22);
+  --cl-selection-fg: #242b38;
+  --cl-focus: rgba(94, 129, 172, 0.55);
+  --cl-scrollbar-thumb: #b9c3d4;
+  --cl-chart-grid: #d8dee9;
+}
+
 [data-theme="catppuccin"] {
   --cl-bg: #1e1e2e;
   --cl-bg-muted: #181825;
@@ -213,6 +271,35 @@
   --cl-chart-grid: #313244;
 }
 
+/* Catppuccin Latte — the official light counterpart to Mocha. */
+[data-theme="catppuccin-latte"] {
+  --cl-bg: #eff1f5;
+  --cl-bg-muted: #e6e9ef;
+  --cl-bg-subtle: #dce0e8;
+  --cl-bg-emphasis: #ccd0da;
+  --cl-border: #bcc0cc;
+  --cl-ring: rgba(30, 102, 245, 0.35);
+  --cl-content: #4c4f69;
+  --cl-content-subtle: #6c6f85;
+  --cl-content-emphasis: #383a56;
+  --cl-content-strong: #232634;
+  --cl-content-inverted: #eff1f5;
+  --cl-brand: #1e66f5;
+  --cl-brand-faint: #dce9fd;
+  --cl-brand-muted: #b9d0f9;
+  --cl-brand-subtle: #8fb3f5;
+  --cl-brand-emphasis: #174fb8;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(30, 102, 245, 0.22);
+  --cl-shadow: rgba(76, 79, 105, 0.12);
+  --cl-header-bg: rgba(239, 241, 245, 0.92);
+  --cl-selection-bg: rgba(30, 102, 245, 0.2);
+  --cl-selection-fg: #232634;
+  --cl-focus: rgba(30, 102, 245, 0.55);
+  --cl-scrollbar-thumb: #bcc0cc;
+  --cl-chart-grid: #dce0e8;
+}
+
 [data-theme="one-dark"] {
   --cl-bg: #282c34;
   --cl-bg-muted: #21252b;
@@ -239,6 +326,35 @@
   --cl-focus: rgba(97, 175, 239, 0.6);
   --cl-scrollbar-thumb: #464c58;
   --cl-chart-grid: #3a3f4b;
+}
+
+/* One Light — Atom's light theme: paper white with blue accents. */
+[data-theme="one-light"] {
+  --cl-bg: #fafafa;
+  --cl-bg-muted: #f0f0f0;
+  --cl-bg-subtle: #e6e6e6;
+  --cl-bg-emphasis: #d6d6d6;
+  --cl-border: #d8d8d8;
+  --cl-ring: rgba(64, 120, 242, 0.35);
+  --cl-content: #383a42;
+  --cl-content-subtle: #83858b;
+  --cl-content-emphasis: #24262e;
+  --cl-content-strong: #121317;
+  --cl-content-inverted: #fafafa;
+  --cl-brand: #4078f2;
+  --cl-brand-faint: #e2ebfd;
+  --cl-brand-muted: #c2d4fa;
+  --cl-brand-subtle: #8faef5;
+  --cl-brand-emphasis: #2b53b8;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(64, 120, 242, 0.22);
+  --cl-shadow: rgba(56, 58, 66, 0.12);
+  --cl-header-bg: rgba(250, 250, 250, 0.92);
+  --cl-selection-bg: rgba(64, 120, 242, 0.2);
+  --cl-selection-fg: #121317;
+  --cl-focus: rgba(64, 120, 242, 0.55);
+  --cl-scrollbar-thumb: #c9c9c9;
+  --cl-chart-grid: #e6e6e6;
 }
 
 [data-theme="solarized-light"] {
@@ -385,6 +501,35 @@
   --cl-chart-grid: #2f3645;
 }
 
+/* Ayu Light — warm paper with the signature orange accent. */
+[data-theme="ayu-light"] {
+  --cl-bg: #fafafa;
+  --cl-bg-muted: #f3f1ec;
+  --cl-bg-subtle: #e8e6e0;
+  --cl-bg-emphasis: #dcd8cf;
+  --cl-border: #e0ddd6;
+  --cl-ring: rgba(255, 153, 64, 0.4);
+  --cl-content: #5c6773;
+  --cl-content-subtle: #9a9fa8;
+  --cl-content-emphasis: #3e4b59;
+  --cl-content-strong: #1f2a33;
+  --cl-content-inverted: #fafafa;
+  --cl-brand: #e86a1f;
+  --cl-brand-faint: #fbeedf;
+  --cl-brand-muted: #f5d3ae;
+  --cl-brand-subtle: #eba964;
+  --cl-brand-emphasis: #b34e0d;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(255, 153, 64, 0.25);
+  --cl-shadow: rgba(92, 103, 115, 0.12);
+  --cl-header-bg: rgba(250, 250, 250, 0.92);
+  --cl-selection-bg: rgba(255, 153, 64, 0.25);
+  --cl-selection-fg: #1f2a33;
+  --cl-focus: rgba(255, 153, 64, 0.55);
+  --cl-scrollbar-thumb: #cfcabd;
+  --cl-chart-grid: #e8e6e0;
+}
+
 /* Rose Pine — mauve / pink / gold, muted and warm. */
 [data-theme="rose-pine"] {
   --cl-bg: #191724;
@@ -470,6 +615,35 @@
   --cl-focus: rgba(167, 192, 128, 0.6);
   --cl-scrollbar-thumb: #475258;
   --cl-chart-grid: #3d484d;
+}
+
+/* Everforest Light — warm paper with soft green accents. */
+[data-theme="everforest-light"] {
+  --cl-bg: #fffbef;
+  --cl-bg-muted: #f2efdf;
+  --cl-bg-subtle: #e9e3cb;
+  --cl-bg-emphasis: #ddd5b5;
+  --cl-border: #d3cbab;
+  --cl-ring: rgba(141, 161, 1, 0.35);
+  --cl-content: #5c6a72;
+  --cl-content-subtle: #939f91;
+  --cl-content-emphasis: #414b53;
+  --cl-content-strong: #2c3438;
+  --cl-content-inverted: #fffbef;
+  --cl-brand: #8da101;
+  --cl-brand-faint: #edf2d5;
+  --cl-brand-muted: #d8e2ac;
+  --cl-brand-subtle: #a9bf5f;
+  --cl-brand-emphasis: #66750a;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(141, 161, 1, 0.22);
+  --cl-shadow: rgba(92, 106, 114, 0.12);
+  --cl-header-bg: rgba(255, 251, 239, 0.92);
+  --cl-selection-bg: rgba(141, 161, 1, 0.2);
+  --cl-selection-fg: #2c3438;
+  --cl-focus: rgba(141, 161, 1, 0.55);
+  --cl-scrollbar-thumb: #c9c19e;
+  --cl-chart-grid: #e9e3cb;
 }
 
 /* Synthwave '84 — neon pink + cyan + purple, retro-pop. */
@@ -617,6 +791,35 @@
   --cl-chart-grid: #103040;
 }
 
+/* Night Owl Light — clean white with teal accents. */
+[data-theme="night-owl-light"] {
+  --cl-bg: #fbfbfb;
+  --cl-bg-muted: #f1f2f5;
+  --cl-bg-subtle: #e6e9ef;
+  --cl-bg-emphasis: #d7dce4;
+  --cl-border: #d9dfe8;
+  --cl-ring: rgba(11, 123, 138, 0.35);
+  --cl-content: #403f53;
+  --cl-content-subtle: #7a7d8f;
+  --cl-content-emphasis: #2e2d45;
+  --cl-content-strong: #1d1c31;
+  --cl-content-inverted: #fbfbfb;
+  --cl-brand: #0b7b8a;
+  --cl-brand-faint: #dceef1;
+  --cl-brand-muted: #b3d9df;
+  --cl-brand-subtle: #5fb3bd;
+  --cl-brand-emphasis: #075a65;
+  --cl-brand-inverted: #ffffff;
+  --cl-glow: rgba(11, 123, 138, 0.22);
+  --cl-shadow: rgba(64, 63, 83, 0.12);
+  --cl-header-bg: rgba(251, 251, 251, 0.92);
+  --cl-selection-bg: rgba(11, 123, 138, 0.18);
+  --cl-selection-fg: #1d1c31;
+  --cl-focus: rgba(11, 123, 138, 0.55);
+  --cl-scrollbar-thumb: #c6ccd6;
+  --cl-chart-grid: #e6e9ef;
+}
+
 /* GitHub Dark — restrained blue + grey, by GitHub. */
 [data-theme="github-dark"] {
   --cl-bg: #0d1117;
@@ -730,6 +933,8 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    /* Never allow a wide table/chart to push the page sideways on mobile */
+    overflow-x: hidden;
   }
 
   body {
@@ -737,6 +942,8 @@
     font-family: var(--cl-font-sans);
     margin: 0;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    overflow-x: hidden;
+    min-width: 0;
   }
 
   ::selection {
@@ -772,6 +979,49 @@
   /* Machine data renders in mono */
   td, pre, code, kbd, samp {
     font-variant-ligatures: none;
+  }
+
+  /* Mobile safeguards: media/charts/tables never force page-wide scroll.
+     Individual tables opt into .cl-table-scroll for contained scrolling. */
+  img, svg, canvas, video {
+    max-width: 100%;
+  }
+  pre {
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Contained horizontal scroll for wide data tables on narrow screens */
+.cl-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+.cl-table-scroll > table {
+  min-width: 560px;
+}
+
+/* Dashboard 12-col grid: stack every panel full-width on phones.
+   Desktop keeps the saved span widths via inline gridColumn. */
+@media (max-width: 640px) {
+  .cl-dashboard-grid > * {
+    grid-column: 1 / -1 !important;
+  }
+}
+
+/* KPI numbers shrink + wrap on phones so long ranges don't blow out cards */
+@media (max-width: 640px) {
+  .cl-stat-value {
+    font-size: 1.35rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .cl-msg {
+    overflow-wrap: anywhere;
   }
 }
 

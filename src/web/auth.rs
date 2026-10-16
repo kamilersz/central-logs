@@ -534,6 +534,14 @@ pub fn required_scope(method: &axum::http::Method, path: &str) -> Option<Scope> 
             return Some(Scope::Admin);
         }
     }
+    // Web-analytics project mutations (create/delete project). A new project
+    // opens a public ingest surface (beacons for that site id), so only
+    // admins may do it — reads stay on the generic /api/* Read rule below.
+    if path == "/api/web/sites" || path.starts_with("/api/web/sites/") {
+        if method != axum::http::Method::GET {
+            return Some(Scope::Admin);
+        }
+    }
     if (path.starts_with("/api/alert-rules/") || path.starts_with("/api/alert-channels/"))
         && method != axum::http::Method::GET
     {
@@ -600,6 +608,13 @@ pub fn is_public_path(path: &str) -> bool {
         // clients and load balancers check it without credentials.
         || p == "/services/collector/health"
         || p == "/services/collector/health/1.0"
+        // First-party web-analytics collector (PLAN-WEB-ANALYTICS W1):
+        // browsers cannot set API-key headers on beacons, so exactly these
+        // two paths are public. Everything else under /v1/web/* (e.g. future
+        // /v1/web/sites CRUD) stays authenticated — the allowlist is exact,
+        // not a prefix.
+        || p == "/v1/web/collect"
+        || p == "/v1/web/t.js"
 }
 
 // =====================================================================
@@ -1197,5 +1212,19 @@ mod tests {
         let c = b"abcdefX";
         let ne: bool = a.ct_eq(c).into();
         assert!(!ne);
+    }
+
+    #[test]
+    fn web_collector_paths_are_public_but_not_their_siblings() {
+        // PLAN-WEB-ANALYTICS W1: exactly these two paths are public…
+        assert!(is_public_path("/v1/web/collect"));
+        assert!(is_public_path("/v1/web/collect/")); // trailing slash tolerated
+        assert!(is_public_path("/v1/web/t.js"));
+        // …but NOT the prefix: site management stays authenticated.
+        assert!(!is_public_path("/v1/web/sites"));
+        assert!(!is_public_path("/v1/web/collect/extra"));
+        assert!(!is_public_path("/v1/web"));
+        // Site CRUD under /api/web stays read/admin-scoped, never public.
+        assert!(!is_public_path("/api/web/sites"));
     }
 }

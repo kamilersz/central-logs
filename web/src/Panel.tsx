@@ -329,6 +329,7 @@ function TopServicesPanel({ panel, override }: { panel: Panel; override?: Period
   if (error) return <Loading error={error} />;
   if (loading || !data) return <Loading error={null} />;
   return (
+    <div className="cl-table-scroll">
     <table className="w-full text-sm">
       <thead>
         <tr className="text-tremor-content-subtle text-xs">
@@ -340,13 +341,14 @@ function TopServicesPanel({ panel, override }: { panel: Panel; override?: Period
       <tbody>
         {data.map((r, i) => (
           <tr key={i} className="border-t border-tremor-border dark:border-dark-tremor-border">
-            <td className="py-1">{r.service ?? "—"}</td>
+            <td className="py-1 break-all">{r.service ?? "—"}</td>
             <td className="py-1 text-right">{(r.n ?? 0).toLocaleString()}</td>
             <td className="py-1 text-right">{(r.errors ?? 0).toLocaleString()}</td>
           </tr>
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -369,6 +371,7 @@ function AnomaliesPanel({
     return <Big value={String(data.length)} sub="flagged anomalies in range" />;
   }
   return (
+    <div className="cl-table-scroll">
     <table className="w-full text-sm">
       <thead>
         <tr className="text-tremor-content-subtle text-xs">
@@ -381,11 +384,11 @@ function AnomaliesPanel({
       <tbody>
         {data.slice(0, 20).map((a, i) => (
           <tr key={i} className="border-t border-tremor-border dark:border-dark-tremor-border">
-            <td className="py-1 text-xs text-tremor-content-subtle">
+            <td className="py-1 text-xs text-tremor-content-subtle whitespace-nowrap">
               {new Date(a.ts).toLocaleString()}
             </td>
             <td className="py-1 text-right font-mono">{a.score.toFixed(2)}</td>
-            <td className="py-1 font-mono text-xs">{a.method}</td>
+            <td className="py-1 font-mono text-xs break-all">{a.method}</td>
             <td className="py-1">
               <SeverityBadge severity={a.severity} />
             </td>
@@ -400,6 +403,7 @@ function AnomaliesPanel({
         )}
       </tbody>
     </table>
+    </div>
   );
 }
 

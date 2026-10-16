@@ -1,6 +1,7 @@
 // Shared UI helpers + chart components used across pages.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { api, type ServiceInfo } from "./api";
 
 /** Polls an async function on an interval; returns {data, error, loading}. */
 export function usePoll<T>(
@@ -88,12 +89,33 @@ export function LineChart({
   series,
   height = 240,
   yLabel,
+  bars = false,
+  bare = false,
+  integerY = false,
+  timeZone,
+  domain,
+  bucketMs,
 }: {
   series: { name: string; color: string; points: { x: number; y: number }[]; dashed?: boolean }[];
   height?: number;
   yLabel?: string;
+  /** Render bars (bucketed counts) instead of polylines. */
+  bars?: boolean;
+  /** Sparkline mode: no axes, gridlines, labels or hover. */
+  bare?: boolean;
+  /** Force integer y ticks (counts must never show 0.50 sessions). */
+  integerY?: boolean;
+  /** IANA zone (or "local") for x-axis labels; default browser time. */
+  timeZone?: string;
+  /** Explicit [min, max] x-domain (e.g. the selected range incl. empties). */
+  domain?: [number, number];
+  /** Bucket width in ms for bar sizing; inferred from point spacing if absent. */
+  bucketMs?: number;
 }) {
   if (series.length === 0 || series.every((s) => s.points.length === 0)) {
+    // Sparklines render nothing (their slot is decorative); full charts get
+    // the honest empty state.
+    if (bare) return null;
     return (
       <div
         className="cl-empty text-tremor-content-subtle dark:text-dark-tremor-content-subtle"
@@ -109,13 +131,15 @@ export function LineChart({
   const allPts = series.flatMap((s) => s.points);
   const xs = allPts.map((p) => p.x);
   const ys = allPts.map((p) => p.y);
-  const xMin = Math.min(...xs);
-  const xMax = Math.max(...xs);
+  const xMin = domain ? domain[0] : Math.min(...xs);
+  const xMax = domain ? domain[1] : Math.max(...xs);
   const yMin = Math.min(...ys, 0);
   const yMax = Math.max(...ys, 1);
   const w = 800;
   const h = height;
-  const pad = { left: 50, right: 20, top: 20, bottom: 30 };
+  const pad = bare
+    ? { left: 2, right: 2, top: 2, bottom: 2 }
+    : { left: 34, right: 12, top: 12, bottom: 24 };
   const innerW = w - pad.left - pad.right;
   const innerH = h - pad.top - pad.bottom;
   const sx = (x: number) =>
@@ -126,13 +150,13 @@ export function LineChart({
   // y-axis gridlines (5) on a nice-number scale so labels are integers.
   // Floor the range at 0 for value charts (volume, errors) so the axis
   // doesn't gain spurious space below the data.
-  const yticks = niceTicks(Math.max(0, yMin), Math.max(yMin, yMax), 5);
+  const yticks = integerYTicks(niceTicks(Math.max(0, yMin), Math.max(yMin, yMax), 5), integerY);
   // x-axis ticks (6) — switch format with span: time-of-day under a day,
   // date-only above. Always aligned to day boundaries when the span is
   // ≥ 24h so multi-day windows don't show random mid-day ticks.
   const spanMs = xMax - xMin;
   const spanDays = spanMs / 86_400_000;
-  const xTicks = buildXTicks(xMin, xMax, spanDays, 6);
+  const xTicks = buildXTicks(xMin, xMax, spanDays, 6, timeZone);
 
   // Hover state — nearest point per series at the cursor's x.
   const [hover, setHover] = useState<{ px: number; rows: { name: string; color: string; x: number; y: number }[] } | null>(null);
@@ -183,11 +207,11 @@ export function LineChart({
         viewBox={`0 0 ${w} ${h}`}
         className="w-full block"
         style={{ height }}
-        onMouseMove={onMove}
-        onMouseLeave={onLeave}
+        onMouseMove={bare ? undefined : onMove}
+        onMouseLeave={bare ? undefined : onLeave}
       >
         {/* y gridlines + labels */}
-        {yticks.map((y, i) => (
+        {!bare && yticks.map((y, i) => (
           <g key={i}>
             <line
               x1={pad.left}
@@ -210,7 +234,7 @@ export function LineChart({
           </g>
         ))}
         {/* x labels */}
-        {xTicks.map((xt, i) => (
+        {!bare && xTicks.map((xt, i) => (
           <text
             key={i}
             x={sx(xt.t)}
@@ -222,8 +246,32 @@ export function LineChart({
             {xt.label}
           </text>
         ))}
-        {/* lines */}
-        {series.map((s) => {
+        {/* bars (bucketed counts) or lines */}
+        {bars
+          ? series.map((s) => {
+              if (s.points.length === 0) return null;
+              const bw = barWidth(s.points, xMin, xMax, innerW, bucketMs);
+              const base = sy(Math.max(0, yMin));
+              return (
+                <g key={s.name} fill={s.color} opacity={0.85}>
+                  {s.points.map((p, i) => {
+                    const bx = sx(p.x);
+                    const by = sy(p.y);
+                    return (
+                      <rect
+                        key={i}
+                        x={Math.max(pad.left, bx - bw / 2)}
+                        y={Math.min(by, base)}
+                        width={Math.max(1, Math.min(bw, innerW + pad.left - Math.max(pad.left, bx - bw / 2)))}
+                        height={Math.max(0, Math.abs(base - by))}
+                        rx={1}
+                      />
+                    );
+                  })}
+                </g>
+              );
+            })
+          : series.map((s) => {
           if (s.points.length === 0) return null;
           const path = s.points
             .map((p, i) => `${i === 0 ? "M" : "L"} ${sx(p.x)} ${sy(p.y)}`)
@@ -242,7 +290,7 @@ export function LineChart({
           );
         })}
         {/* hover crosshair + per-series dots */}
-        {hover && (
+        {!bare && hover && (
           <g pointerEvents="none">
             <line
               x1={hover.px}
@@ -266,7 +314,7 @@ export function LineChart({
             ))}
           </g>
         )}
-        {yLabel && (
+        {!bare && yLabel && (
           <text
             x={12}
             y={pad.top + innerH / 2}
@@ -482,7 +530,7 @@ export function timeFilterParams(s: TimeFilterState): {
 }
 
 const inputCls =
-  "px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm";
+  "px-2 py-1 bg-tremor-background dark:bg-dark-tremor-background border border-tremor-border dark:border-dark-tremor-border rounded text-sm min-w-0";
 
 /** Shared toolbar: relative window / custom from-to range + optional filter
  * DSL input. Rendered above every preset dashboard. `defaultOption` adds a
@@ -522,15 +570,15 @@ export function TimeFilterBar({
             type="datetime-local"
             value={value.from}
             onChange={(e) => onChange({ ...value, from: e.target.value })}
-            className={inputCls}
+            className={`${inputCls} w-full sm:w-auto`}
             aria-label="from"
           />
-          <span className="text-tremor-content-subtle text-sm">→</span>
+          <span className="hidden sm:inline text-tremor-content-subtle text-sm">→</span>
           <input
             type="datetime-local"
             value={value.to}
             onChange={(e) => onChange({ ...value, to: e.target.value })}
-            className={inputCls}
+            className={`${inputCls} w-full sm:w-auto`}
             aria-label="to"
           />
           {!customRangeValid(value) && (
@@ -539,17 +587,215 @@ export function TimeFilterBar({
         </>
       )}
       {showFilter && (
-        <input
-          type="text"
+        <FilterInput
           value={value.filter}
-          onChange={(e) => onChange({ ...value, filter: e.target.value })}
+          onChange={(filter) => onChange({ ...value, filter })}
           placeholder='filter, e.g. service:telegram-bot level:error'
-          className={`${inputCls} flex-1 min-w-[220px] font-mono`}
-          aria-label="filter"
+          ariaLabel="filter"
+          className={`${inputCls} w-full sm:flex-1 sm:min-w-[220px] font-mono`}
         />
       )}
       {/* Jump from the dashboard to the raw logs with the same range+filter. */}
       <LogsExplorerLink {...timeFilterParams(value)} />
+    </div>
+  );
+}
+
+// =====================================================================
+// Filter input with `service:` autocomplete
+// =====================================================================
+
+/** A filter-DSL text input that completes `service:<name>` from the server's
+ *  service registry (`GET /api/services`, maintained by the rollup job).
+ *  Plain text otherwise — every other `column:value` clause passes through
+ *  untouched. Drop-in replacement for the raw `<input>`s on the logs
+ *  explorer, alert-rule editor, dashboard builder, and preset pages.
+ *
+ *  Completion triggers on the `service:` token immediately before the
+ *  cursor (`-service:` negation included). Tab / Enter accepts the
+ *  highlighted row, arrows move, Esc closes. Analytics note: choosing a
+ *  suggestion does not emit anything special — the resulting filter text
+ *  flows through the normal `onChange` like typed text.
+ */
+export function FilterInput({
+  value,
+  onChange,
+  placeholder,
+  className,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [services, setServices] = useState<ServiceInfo[]>([]);
+  const [registryTotal, setRegistryTotal] = useState(0);
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const [cursor, setCursor] = useState(0);
+
+  // Registry snapshot per mount + slow refresh (services change rarely;
+  // the list is small enough to filter client-side).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listServices(undefined, 1000)
+      .then((r) => {
+        if (cancelled) return;
+        setServices(r.services);
+        setRegistryTotal(r.total);
+      })
+      .catch(() => {
+        /* offline / old server without /api/services — plain input */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The `service:` token (with optional `-` negation) right before the cursor.
+  const token = useMemo(() => {
+    const before = value.slice(0, Math.max(0, Math.min(cursor, value.length)));
+    const m = /(?:^|\s)(-?service:)([^\s:]*)$/.exec(before);
+    if (!m) return null;
+    // m[0] carries at most one leading whitespace char (the `(?:^|\s)`).
+    const matchStart = before.length - m[0].length;
+    const start = /^\s/.test(m[0]) ? matchStart + 1 : matchStart;
+    return { prefix: m[1], partial: m[2], start };
+  }, [value, cursor]);
+
+  const matches = useMemo(() => {
+    if (!token) return [];
+    const p = token.partial.toLowerCase();
+    return services
+      .filter((s) => s.name.toLowerCase().startsWith(p))
+      .slice(0, 8);
+  }, [services, token]);
+
+  // Open only while a token is under the cursor and we know services.
+  const showOpen = open && token !== null && services.length > 0;
+
+  function syncCursor(el: HTMLInputElement | null) {
+    if (el) setCursor(el.selectionStart ?? el.value.length);
+  }
+
+  function complete(name: string) {
+    if (!token || !inputRef.current) return;
+    const before = value.slice(0, token.start);
+    const after = value.slice(Math.max(0, Math.min(cursor, value.length)));
+    // Preserve a leading `-` for `-service:` negation (it's part of prefix).
+    const next = `${before}${token.prefix}${name}${after}`;
+    onChange(next);
+    const pos = (before + token.prefix + name).length;
+    setCursor(pos);
+    setOpen(false);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      }
+    });
+  }
+
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        className={className}
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => {
+          onChange(e.target.value);
+          syncCursor(e.target);
+          setHighlight(0);
+          setOpen(true);
+        }}
+        onKeyUp={(e) => {
+          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+            syncCursor(e.currentTarget);
+          }
+        }}
+        onClick={(e) => {
+          syncCursor(e.currentTarget);
+          setOpen(true);
+        }}
+        onFocus={(e) => {
+          syncCursor(e.currentTarget);
+          setOpen(true);
+        }}
+        onBlur={() => {
+          // Delayed so a suggestion click (mousedown) lands before close.
+          setTimeout(() => setOpen(false), 120);
+        }}
+        onKeyDown={(e) => {
+          if (!showOpen) {
+            if (e.key === "Escape") setOpen(false);
+            return;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHighlight((h) => (h + 1) % Math.max(1, matches.length));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHighlight((h) => (h - 1 + matches.length) % Math.max(1, matches.length));
+          } else if (e.key === "Enter" || e.key === "Tab") {
+            const pick = matches[highlight] ?? matches[0];
+            if (pick) {
+              e.preventDefault();
+              complete(pick.name);
+            }
+          } else if (e.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+      />
+      {showOpen && (
+        <div className="absolute z-30 mt-1 w-full max-w-md rounded-md border border-tremor-border dark:border-dark-tremor-border bg-tremor-background dark:bg-dark-tremor-background shadow-lg overflow-hidden">
+          {matches.length === 0 ? (
+            <div className="px-3 py-2 text-xs opacity-60 font-mono">
+              no service starts with “{token.partial}”
+            </div>
+          ) : (
+            <ul>
+              {matches.map((s, i) => (
+                <li key={s.name}>
+                  <button
+                    type="button"
+                    // mousedown beats input blur (see the blur timeout above).
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      complete(s.name);
+                    }}
+                    onMouseEnter={() => setHighlight(i)}
+                    className={`w-full flex items-baseline justify-between gap-2 px-3 py-1.5 text-left font-mono text-xs ${
+                      i === highlight
+                        ? "bg-tremor-background-muted dark:bg-dark-tremor-background-muted"
+                        : ""
+                    }`}
+                  >
+                    <span className="truncate">
+                      <span className="opacity-50">{token.prefix}</span>
+                      {s.name}
+                    </span>
+                    <span className="opacity-50 shrink-0">{s.total.toLocaleString()} rows</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="px-3 py-1 text-[10px] opacity-50 border-t border-tremor-border dark:border-dark-tremor-border">
+            {registryTotal} service{registryTotal === 1 ? "" : "s"} known · Tab to complete
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -579,6 +825,70 @@ export function niceTicks(min: number, max: number, count: number): number[] {
   return ticks;
 }
 
+/** Force integer ticks for count axes (fractional sessions are nonsense). */
+export function integerYTicks(ticks: number[], integerY: boolean): number[] {
+  if (!integerY) return ticks;
+  const ints = [...new Set(ticks.map((t) => Math.round(t)))].sort((a, b) => a - b);
+  return ints.length > 0 ? ints : [0];
+}
+
+/** Bar width in viewBox px from bucket spacing (or explicit bucketMs). */
+function barWidth(
+  points: { x: number; y: number }[],
+  xMin: number,
+  xMax: number,
+  innerW: number,
+  bucketMs?: number,
+): number {
+  let step: number;
+  if (bucketMs && bucketMs > 0) {
+    step = bucketMs;
+  } else {
+    const xs = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b);
+    let min = Infinity;
+    for (let i = 1; i < xs.length; i++) min = Math.min(min, xs[i] - xs[i - 1]);
+    step = Number.isFinite(min) ? min : (xMax - xMin) / Math.max(1, xs.length);
+  }
+  if (!(step > 0)) return 4;
+  const span = Math.max(xMax - xMin, step);
+  return Math.max(2, (step / span) * innerW * 0.7);
+}
+
+/** Canonical bucket key ("1m"|"5m"|"1h"|"1d", as returned by /api/web/stats)
+ *  → milliseconds. */
+export function intervalMs(key: string | undefined): number {
+  switch (key) {
+    case "1m": return 60_000;
+    case "5m": return 5 * 60_000;
+    case "1h": return 3_600_000;
+    case "1d": return 86_400_000;
+    default: return 3_600_000;
+  }
+}
+
+/** Zero-fill a sparse bucket series over [fromMs, toMs] so gaps read as
+ *  gaps instead of vanishing (and bars space evenly). Points snap down to
+ *  their bucket start. */
+export function fillBuckets(
+  points: { x: number; y: number }[],
+  fromMs: number,
+  toMs: number,
+  stepMs: number,
+): { x: number; y: number }[] {
+  if (!(stepMs > 0) || !(toMs > fromMs)) return points;
+  const byBucket = new Map<number, number>();
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    const b = fromMs + Math.floor((p.x - fromMs) / stepMs) * stepMs;
+    byBucket.set(b, (byBucket.get(b) ?? 0) + p.y);
+  }
+  const out: { x: number; y: number }[] = [];
+  for (let t = fromMs; t < toMs; t += stepMs) {
+    out.push({ x: t, y: byBucket.get(t) ?? 0 });
+  }
+  return out;
+}
+
 function niceNumber(x: number, round: boolean): number {
   if (x <= 0 || !Number.isFinite(x)) return 1;
   const exp = Math.floor(Math.log10(x));
@@ -601,51 +911,102 @@ function niceNumber(x: number, round: boolean): number {
 /** Build x-axis ticks. For spans ≥24h we step in whole days and label
  *  with the local date — no more "10:00 AM · 7:24 AM · 4:48 AM" randomness
  *  on week-long charts. Sub-day spans fall back to hour-of-day. */
+/** Offset of `tz` ("UTC" | IANA | "local") at instant `t`, in ms. */
+export function tzOffsetMs(tz: string | undefined, t: number): number {
+  if (!tz || tz === "local") return -new Date(t).getTimezoneOffset() * 60_000;
+  if (tz === "UTC") return 0;
+  try {
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const parts = Object.fromEntries(
+      dtf.formatToParts(new Date(t)).map((p) => [p.type, p.value]),
+    );
+    const asUTC = Date.UTC(
+      +parts["year"],
+      +parts["month"] - 1,
+      +parts["day"],
+      +parts["hour"] % 24,
+      +parts["minute"],
+      +parts["second"],
+    );
+    return asUTC - t;
+  } catch {
+    return 0;
+  }
+}
+
+function fmtTick(t: number, opts: Intl.DateTimeFormatOptions, tz?: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: tz === "local" ? undefined : tz }).format(new Date(t));
+  } catch {
+    return new Date(t).toLocaleString();
+  }
+}
+
 function buildXTicks(
   xMin: number,
   xMax: number,
   spanDays: number,
   count: number,
+  tz?: string,
 ): { t: number; label: string }[] {
   if (!Number.isFinite(xMin) || !Number.isFinite(xMax) || xMin === xMax) {
-    return [{ t: xMin, label: new Date(xMin).toLocaleString() }];
+    return [{ t: xMin, label: fmtTick(xMin, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }, tz) }];
   }
+  // Ticks snap to wall-clock boundaries in the selected zone (whole hours,
+  // 6-hour marks, midnights) — never odd times like 06:36 PM.
+  const off = (t: number) => tzOffsetMs(tz, t);
   if (spanDays >= 2) {
-    // Step in whole days, snapped to local midnight. The first label may
-    // be xMin itself if it's already at midnight, otherwise the next one.
-    const out: { t: number; label: string }[] = [];
     const stepDays = spanDays >= 14 ? Math.ceil(spanDays / (count - 1)) : 1;
     const step = stepDays * 86_400_000;
-    const firstMidnight = nextMidnight(xMin);
-    // Always start at xMin so the left edge is anchored.
-    out.push({ t: xMin, label: fmtXLabel(xMin, spanDays) });
-    for (let t = firstMidnight; t <= xMax && out.length < 16; t += step) {
-      out.push({ t, label: fmtXLabel(t, spanDays) });
+    // First wall-midnight at/after xMin.
+    const wall = xMin + off(xMin);
+    const dayStart = Math.floor(wall / 86_400_000) * 86_400_000;
+    let first = dayStart - off(xMin) + (dayStart <= wall ? step : 0);
+    const out: { t: number; label: string }[] = [];
+    for (let t = first; t <= xMax && out.length < 16; t += step) {
+      out.push({ t, label: fmtTick(t, { day: "2-digit", month: "short" }, tz) });
     }
-    if (out[out.length - 1].t !== xMax) {
-      out.push({ t: xMax, label: fmtXLabel(xMax, spanDays) });
+    return out.length > 0 ? out : [{ t: xMin, label: fmtTick(xMin, { day: "2-digit", month: "short" }, tz) }];
+  }
+  if (spanDays >= 1) {
+    // 00 / 06 / 12 / 18 wall marks inside the window.
+    const out: { t: number; label: string }[] = [];
+    const wall = xMin + off(xMin);
+    const dayStart = Math.floor(wall / 86_400_000) * 86_400_000;
+    for (let k = 0; k < 4; k++) {
+      const t = dayStart + k * 6 * 3_600_000 - off(xMin);
+      if (t >= xMin && t <= xMax) {
+        out.push({ t, label: fmtTick(t, { hour: "2-digit", minute: "2-digit", hour12: false }, tz) });
+      }
+    }
+    // Also pin both edges so short ranges keep context.
+    if (out.length === 0 || out[0].t > xMin) {
+      out.unshift({ t: xMin, label: fmtTick(xMin, { hour: "2-digit", minute: "2-digit", hour12: false }, tz) });
     }
     return out;
   }
-  if (spanDays >= 1) {
-    // 24h-ish: a few hour ticks aligned to local midnight/6/12/18.
-    return Array.from({ length: count }, (_, i) => {
-      const t = xMin + ((xMax - xMin) * i) / (count - 1);
-      return { t, label: new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) };
-    });
+  // Sub-day: whole wall hours (30-min when the span is under 3h).
+  const step = spanMs(xMin, xMax) < 3 * 3_600_000 ? 1_800_000 : 3_600_000;
+  const wall = xMin + off(xMin);
+  let t = Math.ceil(wall / step) * step - off(xMin);
+  const out: { t: number; label: string }[] = [];
+  for (; t <= xMax && out.length < 10; t += step) {
+    out.push({ t, label: fmtTick(t, { hour: "2-digit", minute: "2-digit", hour12: false }, tz) });
   }
-  // Sub-day: hour:minute ticks.
-  return Array.from({ length: count }, (_, i) => {
-    const t = xMin + ((xMax - xMin) * i) / (count - 1);
-    return { t, label: new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) };
-  });
+  return out.length > 0 ? out : [{ t: xMin, label: fmtTick(xMin, { hour: "2-digit", minute: "2-digit", hour12: false }, tz) }];
 }
 
-function nextMidnight(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  if (d.getTime() <= ms) d.setDate(d.getDate() + 1);
-  return d.getTime();
+function spanMs(xMin: number, xMax: number): number {
+  return xMax - xMin;
 }
 
 function fmtXLabel(t: number, spanDays: number): string {

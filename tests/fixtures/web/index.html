@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<!-- Manual browser test page for the first-party web tracker
+     (PLAN-WEB-ANALYTICS.md W2). Serve it through a reverse proxy that maps
+     /_/s.js and /_/e to central-logs, e.g. with the Caddy config from
+     INTEGRATION.md ("Website analytics"), then open:
+
+       http://localhost:8090/?utm_source=manual
+
+     Expected rows in web_events (see §5 of INTEGRATION.md):
+       pageview, custom (via the buttons), outbound (external link),
+       download (zip link), vital (LCP/CLS/INP), engagement (on tab hide),
+       error (via the button). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>central-logs tracker test page</title>
+  <!-- Optional backend-injected trace context for log correlation (W5):
+       <meta name="traceparent" content="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"> -->
+  <script defer data-site="site_abc" data-endpoint="/_/e" src="/_/s.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; }
+    button, a { margin-right: .5rem; }
+    pre { background: #f4f4f4; padding: 1rem; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>central-logs tracker test page</h1>
+  <p>Open the browser devtools → Network, then use the buttons below. Each
+     action produces one event in the <code>web_events</code> table.</p>
+
+  <p>
+    <button id="custom">Send custom event</button>
+    <button id="error">Throw an error</button>
+    <button id="reject">Cause unhandled rejection</button>
+    <button id="flush">Scroll to bottom (engagement)</button>
+  </p>
+
+  <p>
+    <!-- Outbound click (external host) -->
+    <a href="https://example.com/external" target="_blank" rel="noopener">External link (outbound)</a>
+    <!-- Download click (same-origin, extension match) -->
+    <a href="/fixtures/sample.zip">Download sample.zip</a>
+  </p>
+
+  <div style="height: 200vh">
+    <p style="padding-top: 100vh">Scroll area — max scroll depth is reported with engagement.</p>
+  </div>
+
+  <script>
+    document.getElementById("custom").onclick = function () {
+      window.cl.track("test_click", { button: "custom", page: "fixture" });
+    };
+    document.getElementById("error").onclick = function () {
+      setTimeout(function () { throw new Error("boom from fixture"); }, 0);
+    };
+    document.getElementById("reject").onclick = function () {
+      Promise.reject(new Error("rejection from fixture"));
+    };
+    document.getElementById("flush").onclick = function () {
+      window.scrollTo(0, document.body.scrollHeight);
+    };
+  </script>
+</body>
+</html>

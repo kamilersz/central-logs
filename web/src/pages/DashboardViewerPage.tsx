@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   usePoll,
@@ -8,6 +8,7 @@ import {
 } from "../components";
 import { PanelView, type PeriodOverride } from "../Panel";
 import { api, type DashboardConfig, type Panel } from "../api";
+import { trackEvent } from "../track";
 
 export default function DashboardViewerPage() {
   const { id } = useParams<{ id: string }>();
@@ -15,6 +16,11 @@ export default function DashboardViewerPage() {
     () => api.getDashboard(Number(id)),
     30000,
   );
+
+  // Dogfood: which saved dashboards actually get opened.
+  useEffect(() => {
+    if (id) trackEvent("ui.dashboards.view", { dashboard_id: id });
+  }, [id]);
 
   // View-time override for every panel's period ("7d → 30d" without editing
   // the dashboard). "" = panel defaults; the saved definition is never
@@ -47,7 +53,7 @@ export default function DashboardViewerPage() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <div>
           <h2 className="text-xl font-semibold">{dash.name}</h2>
           {dash.description && (
@@ -63,7 +69,7 @@ export default function DashboardViewerPage() {
       </div>
       {/* Dynamic time range: applies to all panels at view time. */}
       <TimeFilterBar value={tf} onChange={setTf} showFilter={false} defaultOption="panel defaults" />
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid grid-cols-12 gap-4 cl-dashboard-grid">
         {panels.map((p, i) => (
           <PanelView key={i} panel={p} periodOverride={override} />
         ))}

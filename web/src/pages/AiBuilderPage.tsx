@@ -131,7 +131,7 @@ export default function AiBuilderPage() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
         <div>
           <h2 className="text-xl font-semibold">Build with AI</h2>
           <p className="text-sm text-tremor-content-subtle">
@@ -214,7 +214,7 @@ export default function AiBuilderPage() {
 
       {proposal && (
         <div>
-          <div className="flex justify-between items-center mb-4">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4">
             <div>
               <h3 className="font-medium">{proposal.name}</h3>
               {proposal.description && (
@@ -242,7 +242,7 @@ export default function AiBuilderPage() {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-12 gap-4">
+          <div className="grid grid-cols-12 gap-4 cl-dashboard-grid">
             {proposal.panels.map((p, i) => (
               <PanelView key={i} panel={p} />
             ))}
@@ -256,7 +256,7 @@ export default function AiBuilderPage() {
                 ? "Answer the questions, then refine"
                 : "Not quite right? Describe the change — the preview updates in place."}
             </label>
-            <div className="flex gap-2 mt-1">
+            <div className="flex flex-col sm:flex-row gap-2 mt-1">
               <input
                 type="text"
                 value={refine}

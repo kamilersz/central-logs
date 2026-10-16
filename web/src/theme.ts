@@ -14,7 +14,7 @@
 export interface ThemeDef {
   id: string;
   label: string;
-  group: "Base" | "Editor & design systems";
+  group: "Base" | "Editor & design systems" | "Light";
   dark: boolean;
   /** Three colors shown as a preview chip in the switcher. */
   swatch: [string, string, string];
@@ -78,25 +78,11 @@ export const THEMES: ThemeDef[] = [
     swatch: ["#282c34", "#61afef", "#abb2bf"],
   },
   {
-    id: "solarized-light",
-    label: "Solarized Light",
-    group: "Editor & design systems",
-    dark: false,
-    swatch: ["#fdf6e3", "#268bd2", "#586e75"],
-  },
-  {
     id: "gruvbox-dark",
     label: "Gruvbox Dark",
     group: "Editor & design systems",
     dark: true,
     swatch: ["#282828", "#d79921", "#fbf1c7"],
-  },
-  {
-    id: "gruvbox-light",
-    label: "Gruvbox Light",
-    group: "Editor & design systems",
-    dark: false,
-    swatch: ["#fbf1c7", "#af5f00", "#3c3836"],
   },
   {
     id: "ayu-dark",
@@ -118,13 +104,6 @@ export const THEMES: ThemeDef[] = [
     group: "Editor & design systems",
     dark: true,
     swatch: ["#191724", "#ebbcba", "#e0def4"],
-  },
-  {
-    id: "rose-pine-dawn",
-    label: "Rose Pine Dawn",
-    group: "Editor & design systems",
-    dark: false,
-    swatch: ["#faf4ed", "#d7827e", "#575279"],
   },
   {
     id: "everforest",
@@ -176,9 +155,79 @@ export const THEMES: ThemeDef[] = [
     swatch: ["#0d1117", "#2f81f7", "#c9d1d9"],
   },
   {
+    id: "tokyo-day",
+    label: "Tokyo Day",
+    group: "Light",
+    dark: false,
+    swatch: ["#e1e2e7", "#2e7de9", "#1a1f3c"],
+  },
+  {
+    id: "catppuccin-latte",
+    label: "Catppuccin Latte",
+    group: "Light",
+    dark: false,
+    swatch: ["#eff1f5", "#1e66f5", "#232634"],
+  },
+  {
+    id: "nord-light",
+    label: "Nord Light",
+    group: "Light",
+    dark: false,
+    swatch: ["#eceff4", "#5e81ac", "#242b38"],
+  },
+  {
+    id: "one-light",
+    label: "One Light",
+    group: "Light",
+    dark: false,
+    swatch: ["#fafafa", "#4078f2", "#121317"],
+  },
+  {
+    id: "solarized-light",
+    label: "Solarized Light",
+    group: "Light",
+    dark: false,
+    swatch: ["#fdf6e3", "#268bd2", "#586e75"],
+  },
+  {
+    id: "gruvbox-light",
+    label: "Gruvbox Light",
+    group: "Light",
+    dark: false,
+    swatch: ["#fbf1c7", "#af5f00", "#3c3836"],
+  },
+  {
+    id: "ayu-light",
+    label: "Ayu Light",
+    group: "Light",
+    dark: false,
+    swatch: ["#fafafa", "#e86a1f", "#1f2a33"],
+  },
+  {
+    id: "everforest-light",
+    label: "Everforest Light",
+    group: "Light",
+    dark: false,
+    swatch: ["#fffbef", "#8da101", "#2c3438"],
+  },
+  {
+    id: "night-owl-light",
+    label: "Night Owl Light",
+    group: "Light",
+    dark: false,
+    swatch: ["#fbfbfb", "#0b7b8a", "#1d1c31"],
+  },
+  {
+    id: "rose-pine-dawn",
+    label: "Rose Pine Dawn",
+    group: "Light",
+    dark: false,
+    swatch: ["#faf4ed", "#d7827e", "#575279"],
+  },
+  {
     id: "github-light",
     label: "GitHub Light",
-    group: "Editor & design systems",
+    group: "Light",
     dark: false,
     swatch: ["#ffffff", "#0969da", "#24292f"],
   },

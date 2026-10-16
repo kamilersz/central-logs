@@ -112,6 +112,11 @@ pub enum Protocol {
     /// `namespace`/`pod`/`container` in attributes. Queryable via
     /// `protocol:k8s_api`.
     K8sApi,
+    /// First-party website analytics beacons (`POST /v1/web/collect`). One
+    /// beacon = one WAL record whose `raw` payload is a JSON envelope holding
+    /// N browser events; the ingest side expands it into `web_events` rows.
+    /// See PLAN-WEB-ANALYTICS.md (W1).
+    WebEvent,
 }
 
 impl Protocol {
@@ -130,6 +135,7 @@ impl Protocol {
             Protocol::K8sAudit => "k8s_audit",
             Protocol::DockerApi => "docker_api",
             Protocol::K8sApi => "k8s_api",
+            Protocol::WebEvent => "web_event",
         }
     }
 }

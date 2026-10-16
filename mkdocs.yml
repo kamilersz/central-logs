@@ -75,6 +75,7 @@ nav:
       - Dashboards: dashboards.md
       - Alerts: alerts.md
       - Error Tracking: ERROR_TRACKING.md
+      - Web Analytics: web-analytics.md
       - AI features: ai.md
       - Performance: performance.md
   - Operator Guide:

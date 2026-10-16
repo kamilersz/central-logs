@@ -129,7 +129,7 @@ export default function StoragePage() {
       {loading && <div className="text-tremor-content-subtle text-sm mb-3">loading…</div>}
 
       {/* Header stats */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         <Stat label="hot rows" value={fmtNum(data?.hot_rows)} sub={`oldest ${relTime(data?.oldest_hot_ts)}`} />
         <Stat label="cold parquet" value={fmtBytes(data?.cold_parquet_bytes)} sub={`${fmtNum(data?.cold_parquet_files)} files`} />
         <Stat label="wal directory" value={fmtBytes(data?.wal_bytes)} sub={data?.retention.wal_max_bytes ? `cap ${fmtBytes(data.retention.wal_max_bytes)}` : "no cap"} />

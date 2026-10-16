@@ -7,6 +7,14 @@
 # duckdb_memory_limit = "2GB"
 # duckdb_threads = 4
 
+# GeoIP City database for web-analytics region/city attribution
+# (country works without it behind Cloudflare via CF-IPCountry).
+# Fetch with ./scripts/fetch-geolite.sh (wp-statistics mirror, no key needed),
+# then point here. Requires a geoip-enabled build (scripts/deploy.sh builds
+# with --features geoip); without the file the server logs one warning at
+# boot and continues country-only.
+# geoip_db_path = "./geoip/GeoLite2-City.mmdb"
+
 [retention]
 hot_max_age = "2mo"        # hot tier bound (overrides hot_tier_hours)
 # hot_max_bytes = "10GB"   # size-based hot cap (whichever fires first)
@@ -74,3 +82,41 @@ namespaces = []               # [] = all namespaces
 label_selector = ""           # e.g. "app=web"
 refresh_secs = 30
 tail_lines = 0
+
+# ── Website analytics (PLAN-WEB-ANALYTICS.md) ──────────────────────────
+# First-party, cookieless pageview/event collection for YOUR sites.
+# Beacons arrive same-origin (proxy /_/s.js + /_/e → /v1/web/*, see
+# INTEGRATION.md §"Website analytics"). Visitor identity is a SHA-256 hash
+# of (daily salt, site, IP, UA) — raw IPs are never stored.
+[web]
+enabled = false
+trusted_proxies = ["127.0.0.1/32", "::1/128"]  # who may set X-Forwarded-For / X-CL-User
+max_beacon_bytes = 16384
+max_events_per_beacon = 20
+rate_limit_per_ip_per_min = 120
+shed_when_wal_fill_pct = 80    # drop analytics before logs feel WAL pressure
+honor_dnt = true               # DNT/Sec-GPC → 202, not stored
+raw_retention_days = 90        # web_events TTL; rollups + sessions kept longer
+session_gap_minutes = 30       # inactivity gap that closes a visit
+auto_create_projects = true    # TOFU: first beacon with a new id creates the
+auto_create_max_projects = 100 # project (its origin becomes allowed); capped
+
+[[web.site]]
+id = "site_abc"
+allowed_origins = ["https://example.com"]
+# user_header = "X-CL-User"    # authenticated-user header set by YOUR proxy
+#                              # (client-supplied copies are stripped/ignored
+#                              #  unless the peer is a trusted proxy)
+# exclude_ips = ["203.0.113.7", "10.0.0.0/8"]  # your own IPs/CIDRs: matching
+#                              # beacons are stored flagged internal and hidden
+#                              # by the dashboard's "exclude my visits" toggle
+#
+# ...or accept beacons from any origin (handy behind churning proxy
+# hostnames; anyone can then submit under the id, subject to rate limits):
+# allowed_origins = ["*"]
+#
+# [[web.site]] entries below are seeds (config-managed ids cannot be deleted
+# via the API). With auto_create_projects (default on), new projects usually
+# need NO config at all: the first beacon carrying a new id creates the
+# project, with the beacon's origin as its first allowed origin (trust on
+# first use — afterwards only those origins are accepted).

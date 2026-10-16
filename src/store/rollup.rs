@@ -140,6 +140,44 @@ pub fn rollup_once(
         let n = stmt.execute([since_1m_ts])?;
         total += n;
     }
+    // Service registry: merge every service seen in this cycle's window.
+    // Same non-overlapping `ts > since` discipline as the rollups above, so
+    // totals accumulate exactly once. On a fresh table (first run after
+    // deploy) backfill from `logs_all` — hot + cold — so long-idle services
+    // appear immediately instead of only when they log again.
+    {
+        let empty: bool = tx
+            .query_row("SELECT COUNT(*) = 0 FROM services", [], |r| r.get(0))
+            .unwrap_or(true);
+        if empty {
+            let mut stmt = tx.prepare(
+                r#"
+                INSERT INTO services (name, first_seen, last_seen, total)
+                SELECT service, MIN(ts), MAX(ts), COUNT(*)
+                FROM logs_all
+                WHERE service IS NOT NULL AND service <> ''
+                GROUP BY service
+                ON CONFLICT(name) DO NOTHING;
+                "#,
+            )?;
+            total += stmt.execute([])?;
+        } else {
+            let mut stmt = tx.prepare(
+                r#"
+                INSERT INTO services (name, first_seen, last_seen, total)
+                SELECT service, MIN(ts), MAX(ts), COUNT(*)
+                FROM logs
+                WHERE ts > ? AND service IS NOT NULL AND service <> ''
+                GROUP BY service
+                ON CONFLICT(name) DO UPDATE SET
+                  first_seen = LEAST(services.first_seen, EXCLUDED.first_seen),
+                  last_seen = GREATEST(services.last_seen, EXCLUDED.last_seen),
+                  total = services.total + EXCLUDED.total;
+                "#,
+            )?;
+            total += stmt.execute([since_1m_ts])?;
+        }
+    }
     tx.commit()?;
     state.last_1m_bucket = Some(now);
     state.last_1h_bucket = Some(now);
@@ -165,4 +203,104 @@ pub fn spawn_rollup_task(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::appender::{insert_batch, LogRow};
+
+    fn test_store() -> (tempfile::TempDir, crate::store::Store) {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::store::Store::open(
+            &tmp.path().join("t.duckdb"),
+            tmp.path().join("parquet"),
+            Vec::new(),
+        )
+        .unwrap();
+        (tmp, store)
+    }
+
+    fn log_row(service: &str, ts: chrono::DateTime<chrono::Utc>) -> LogRow {
+        LogRow {
+            ts,
+            insert_ts: ts,
+            service: service.to_string(),
+            message: "m".to_string(),
+            ..LogRow::empty_at(ts)
+        }
+    }
+
+    fn insert_logs(store: &crate::store::Store, rows: &[LogRow]) {
+        let conn = store.lock();
+        insert_batch(&conn, &[], rows).unwrap();
+    }
+
+    #[test]
+    fn rollup_maintains_service_registry() {
+        let (_tmp, store) = test_store();
+        let now = chrono::Utc::now();
+        insert_logs(
+            &store,
+            &[
+                log_row("api", now - chrono::Duration::minutes(30)),
+                log_row("api", now - chrono::Duration::minutes(20)),
+                log_row("web", now - chrono::Duration::minutes(10)),
+                log_row("", now - chrono::Duration::minutes(5)), // skipped: empty
+            ],
+        );
+        let conn = store.lock();
+        let mut state = RollupState::default();
+        rollup_once(&conn, &mut state, &RollupConfig::default()).unwrap();
+
+        let mut names: Vec<(String, i64)> = conn
+            .prepare("SELECT name, total FROM services ORDER BY name")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![("api".to_string(), 2), ("web".to_string(), 1)],
+            "registry holds per-service totals, empty service skipped"
+        );
+
+        // Second cycle accumulates exactly once (non-overlapping windows).
+        drop(conn);
+        insert_logs(&store, &[log_row("api", chrono::Utc::now())]);
+        let conn = store.lock();
+        rollup_once(&conn, &mut state, &RollupConfig::default()).unwrap();
+        let total: i64 = conn
+            .query_row("SELECT total FROM services WHERE name = 'api'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(total, 3);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM services", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "no duplicate registry rows");
+    }
+
+    #[test]
+    fn rollup_backfills_idle_services_from_cold_tier() {
+        let (_tmp, store) = test_store();
+        // Older than the 7-day incremental lookback: only the empty-table
+        // backfill (via logs_all) can pick it up.
+        let old = chrono::Utc::now() - chrono::Duration::days(30);
+        insert_logs(&store, &[log_row("legacy", old)]);
+        let conn = store.lock();
+        let mut state = RollupState::default();
+        rollup_once(&conn, &mut state, &RollupConfig::default()).unwrap();
+        let total: i64 = conn
+            .query_row(
+                "SELECT total FROM services WHERE name = 'legacy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 1, "backfill covers services idle past the lookback");
+    }
 }

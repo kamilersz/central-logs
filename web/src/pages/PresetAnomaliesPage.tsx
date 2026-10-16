@@ -31,7 +31,7 @@ export default function PresetAnomaliesPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <Stat label="total" value={String(anomalies.length)} />
         <Stat
           label="by method"
