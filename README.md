@@ -57,6 +57,14 @@ every release and on every push to `main` (`:main` tag). The image runs as a
 non-root user, stores data in the `/data` volume, and ships a `HEALTHCHECK`
 on `/health`.
 
+Kubernetes? A reference Deployment + Service + PVC + Secret is in
+[`deploy/k8s.yaml`](deploy/k8s.yaml):
+
+```bash
+kubectl apply -f deploy/k8s.yaml
+kubectl -n central-logs port-forward svc/central-logs 8080:80
+```
+
 ### Run with Docker Compose
 
 ```bash

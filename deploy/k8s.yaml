@@ -1,0 +1,164 @@
+# Reference Kubernetes manifest for central-logs.
+#
+#   kubectl apply -f deploy/k8s.yaml
+#   kubectl -n central-logs port-forward svc/central-logs 8080:80
+#
+# Before the first apply, replace the placeholder admin key:
+#
+#   kubectl -n central-logs create secret generic central-logs-secrets \
+#     --from-literal=api-key="clk_$(openssl rand -hex 24)"
+#
+# Notes
+# - The image is public on GHCR. On a private cluster, add an
+#   imagePullSecret for ghcr.io to the pod spec.
+# - /data is the ONLY stateful directory (DuckDB hot tier, WAL, Parquet
+#   cold tier, backups). Mount a PVC there — losing it loses all data.
+# - Single replica on purpose: DuckDB is single-writer, so scale vertically
+#   (bigger PVC / more RAM) instead of adding replicas.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: central-logs
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: central-logs-data
+  namespace: central-logs
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi # logs grow fast — size for your ingest rate × retention
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: central-logs-secrets
+  namespace: central-logs
+type: Opaque
+stringData:
+  # Placeholder — replace with `clk_<openssl rand -hex 24>` before applying,
+  # or delete this Secret and create it with kubectl as shown at the top.
+  api-key: "clk_CHANGEME_openssl_rand_hex_24"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: central-logs
+  namespace: central-logs
+  labels:
+    app: central-logs
+spec:
+  selector:
+    app: central-logs
+  ports:
+    - name: http # dashboard + HTTP/OTLP/Sentry/web-analytics ingest
+      port: 80
+      targetPort: 8080
+    - name: syslog-tcp
+      port: 5140
+      targetPort: 5140
+      protocol: TCP
+    - name: syslog-udp
+      port: 5140
+      targetPort: 5140
+      protocol: UDP
+  # LoadBalancer on a cluster that provides one; use NodePort otherwise.
+  type: LoadBalancer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central-logs
+  namespace: central-logs
+  labels:
+    app: central-logs
+spec:
+  # Single writer: DuckDB does not support multi-writer access.
+  replicas: 1
+  strategy:
+    type: Recreate # avoid two pods fighting over the same PVC
+  selector:
+    matchLabels:
+      app: central-logs
+  template:
+    metadata:
+      labels:
+        app: central-logs
+    spec:
+      # Runs as the non-root `central` user baked into the image (uid 999).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999 # so the mounted PVC is writable by that uid
+      containers:
+        - name: central-logs
+          image: ghcr.io/kamilersz/central-logs:0.1.0 # pin a version, not :latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CENTRAL_LOGS_DATA_DIR
+              value: /data
+            - name: CENTRAL_LOGS_HTTP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: central-logs-secrets
+                  key: api-key
+            # Optional: mount a TOML config and point at it —
+            # CENTRAL_LOGS_CONFIG: /etc/central-logs/central-logs.toml
+            - name: RUST_LOG
+              value: info
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 5140
+              name: syslog-tcp
+            - containerPort: 5140
+              name: syslog-udp
+              protocol: UDP
+          # /health is unauthenticated on purpose — that's what makes it
+          # usable as a probe (the dashboard at / requires auth).
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30 # cold DuckDB open + first WAL replay can be slow
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              # DuckDB defaults to ~80% of RAM; give the pod a ceiling and
+              # cap DuckDB itself via CENTRAL_LOGS_DUCKDB_MEMORY_LIMIT.
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: central-logs-data
+        # readOnlyRootFilesystem: true means /tmp is not writable by default.
+        - name: tmp
+          emptyDir: {}

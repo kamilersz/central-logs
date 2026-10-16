@@ -1,10 +1,31 @@
 # Install & deploy
 
-central-logs is a single Rust binary; deployment is a single
-`cargo build --release` plus a systemd unit (or any other supervisor).
+central-logs ships three ways — grab a [prebuilt binary](https://github.com/kamilersz/central-logs/releases),
+pull the [Docker image](#docker--containers--kubernetes), or `cargo build --release`
+from source plus a systemd unit (or any other supervisor).
+
 This page covers what to think about before deploying, with
 operational details in [Operations](OPERATIONS.md) and the full
 config knob table in [Configuration](CONFIGURATION.md).
+
+## Fastest paths
+
+```bash
+# Prebuilt binary (dashboard embedded; Linux x86_64/arm64, macOS arm64)
+VERSION=v0.1.0
+curl -fsSL "https://github.com/kamilersz/central-logs/releases/download/${VERSION}/central-logs-${VERSION}-x86_64-linux.tar.gz" | tar -xz
+./central-logs-*/central-logs
+
+# Or a container
+docker run -d -p 8080:8080 -v central-logs-data:/data \
+  ghcr.io/kamilersz/central-logs:latest
+```
+
+Both land the dashboard on `http://localhost:8080`, write data under
+`./data/` (or the `/data` volume), and print a one-time admin token on
+first run unless you set `CENTRAL_LOGS_HTTP_API_KEY`. The rest of this page
+covers building from source, storage layout, auth, and production knobs —
+all of which apply equally to the binary and the container.
 
 ## Build flavors
 
@@ -162,29 +183,85 @@ data/       data-8085/  data-8086/  data-8087/
 Don't `rm` `central.duckdb.wal` while the process is running. The
 service now checkpoints on shutdown, so you should never need to.
 
-## Docker / containers
+## Docker / containers / Kubernetes
 
-The binary is self-contained — the only filesystem requirement is
-that `./data` (or whatever `--data-dir` points at) is persistent.
-A minimal Dockerfile:
+The repo ships a production `Dockerfile` and a `docker-compose.yml`, and
+every release publishes a **multi-arch image** (`linux/amd64` + `linux/arm64`)
+to GitHub Container Registry — no build server or Rust toolchain needed on
+the target host.
 
-```dockerfile
-FROM rust:1.85-bookworm AS build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential ca-certificates && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-COPY . .
-RUN cd web && npm ci && npm run build && cd .. && cargo build --release
+The container is the same single binary with the SPA embedded, running as a
+non-root user. **The only thing you must persist is `/data`** (DuckDB, WAL,
+Parquet, backups all live there), and the image declares a `HEALTHCHECK`
+against `/health`.
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/target/release/central-logs /usr/local/bin/
-EXPOSE 8080 5140/udp 5140
-ENTRYPOINT ["/usr/local/bin/central-logs"]
+### Quick start — Docker Compose
+
+```bash
+git clone https://github.com/kamilersz/central-logs && cd central-logs
+echo "CENTRAL_LOGS_HTTP_API_KEY=clk_$(openssl rand -hex 24)" >> .env
+docker compose up -d        # dashboard on http://localhost:8080
 ```
 
-Mount `/data` as a volume.
+### Quick start — plain docker run
+
+```bash
+docker run -d --name central-logs \
+  -p 8080:8080 \
+  -e CENTRAL_LOGS_HTTP_API_KEY=clk_$(openssl rand -hex 24) \
+  -v central-logs-data:/data \
+  ghcr.io/kamilersz/central-logs:latest
+```
+
+Ports: `8080` (HTTP API + dashboard + ingest), `5140/tcp` + `5140/udp`
+(syslog), and — only after enabling the matching `[ingest.*]` config —
+`12201` (Docker gelf driver) and `24224` (fluentd forward).
+
+### Pulling a specific version
+
+Images are tagged `latest`, the release semver (`0.1.0`, `0.1`), `main`
+(every push to main), and `sha-<short-sha>`. Pin a semver tag (or even a
+digest) in production so a surprise `latest` push can't change what you run:
+
+```bash
+docker pull ghcr.io/kamilersz/central-logs:0.1.0
+```
+
+### Kubernetes
+
+`deploy/k8s.yaml` is a ready Deployment + Service + PVC + Secret. The
+essentials it encodes, if you write your own:
+
+- image `ghcr.io/kamilersz/central-logs:<version>` (GHCR is public; on a
+  private cluster add an `imagePullSecrets` entry for `ghcr.io`)
+- a PVC (or `emptyDir` for throwaway) mounted at `/data`
+- `CENTRAL_LOGS_HTTP_API_KEY` from a Secret
+- ports 8080 + 5140 (tcp **and** udp for syslog)
+- readiness/liveness probes on `GET /health`
+
+```bash
+kubectl apply -f deploy/k8s.yaml
+kubectl -n central-logs port-forward svc/central-logs 8080:80
+```
+
+### Building the image yourself
+
+No release? The multi-stage `Dockerfile` builds from the repo — Node builds
+the SPA, Cargo compiles the binary with it embedded, and only the binary
+lands in the slim runtime layer:
+
+```bash
+docker build -t central-logs .
+```
+
+### Where images come from
+
+`.github/workflows/docker.yml` builds each architecture on a native
+runner, pushes it to GHCR by digest, then merges the digests into one
+multi-arch manifest. `.github/workflows/release.yml` does the same idea for
+plain binaries and attaches `.tar.gz` + `.sha256` files to the GitHub
+[Release](https://github.com/kamilersz/central-logs/releases) — so the
+binary and the container always come from the same tag.
 
 ## Upgrade / deploy
 

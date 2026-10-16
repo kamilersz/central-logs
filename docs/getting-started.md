@@ -8,6 +8,15 @@ logs. By the end you will have:
 - an `insert`-only API key for your app,
 - a few log lines shipped and verified with the filter DSL.
 
+> **In a hurry?** Skip the build — pull the image and start in one line:
+> ```bash
+> docker run -d -p 8080:8080 -v central-logs-data:/data \
+>   ghcr.io/kamilersz/central-logs:latest
+> ```
+> Or grab a [prebuilt release binary](https://github.com/kamilersz/central-logs/releases).
+> See [Install & deploy → Docker](install.md#docker--containers--kubernetes).
+> The rest of this page is the from-source path.
+
 ## 1. Prerequisites
 
 - **Rust** (stable, ≥ 1.85 — the `rust-version` in `Cargo.toml`)
